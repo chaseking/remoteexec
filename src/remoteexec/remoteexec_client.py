@@ -8,16 +8,17 @@ from .base import rsync, ssh_exec, ssh_exec_cd_and_python, _popen
 
 def main():
     parser = argparse.ArgumentParser(description="Execute file remotely.")
-    parser.add_argument("executable", nargs=argparse.REMAINDER, help="Remote executable (e.g., 'python script.py')")
     parser.add_argument("--remote", type=str, required=True, help="SSH of the remote server")
     parser.add_argument("--parent", type=str, default=None, help="Parent directory to copy to remote. Defaults to cwd.")
     # parser.add_argument("--dirname_prefix", type=str, default="remoteexec_", help="Remote directory name prefix.")
     parser.add_argument("--dst", type=str, default="~/_remoteexec_srcs/", help="Destination directory on remote server.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
 
-    args = parser.parse_args()
-    args.executable = " ".join(args.executable)
-    if not args.executable:
+    args, executable_args = parser.parse_known_args()
+    print("[DEBUG]", executable_args)
+    print("[DEBUG] sys.argv", sys.argv)
+    
+    if len(executable_args) == 0:
         print("No executable provided; supply a command.")
         sys.exit(1)
     args.parent = Path(args.parent).resolve() if args.parent else Path.cwd()
@@ -40,11 +41,12 @@ def main():
 
     # Run the job
     # command = f"cd {dir_on_remote} && 'bash -l -c \"{args.executable}\"'"
-    command = ["cd", dir_on_remote, "&&", "bash", "-l", "-c", _quote_cmdline_str(args.executable)]
+    # quoted_executable_args = list(map(_quote_cmdline_str, executable_args))
+    command = ["cd", dir_on_remote, "&&", "bash", "-l", "-c", *executable_args]
     ssh_exec(
         remote = args.remote,
         command = command,
-        title = f"[{args.remote}:{dir_on_remote}] > {args.executable}",
+        title = f"[{args.remote}:{dir_on_remote}] > {' '.join(executable_args)}"
     )
     
     # return_code, output_lines = ssh_exec_cd_and_python(
