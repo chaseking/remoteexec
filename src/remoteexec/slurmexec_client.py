@@ -93,8 +93,11 @@ echo
 {pre_run_commands_str}
 
 echo "# Executing command: {exec_command}"
+echo
+
 {exec_command}
 
+echo
 echo "{SLURM_LOG_EOF_MESSAGE}"
 
 # End of script

@@ -81,12 +81,13 @@ def handle_slurmexec_logs(args, output_lines: list[str]):
     print()
     wait_seconds = 3
     try:
-        from .base import SLURM_LOG_EOF_MESSAGE
+        from .slurm import SLURM_LOG_EOF_MESSAGE
         ssh_exec(
             remote=args.remote,
             command=f"tail --retry -f {log_file}",
             title=None,
-            end_check = lambda line: line.strip().equals(SLURM_LOG_EOF_MESSAGE)
+            ignore_line = lambda line: line.startswith("tail: warning: "),
+            end_check = lambda line: line.strip() == SLURM_LOG_EOF_MESSAGE
         )
     except KeyboardInterrupt:
         print(f"\nExiting log viewer. Press Ctrl+C again to cancel task, otherwise wait {wait_seconds} seconds.")
