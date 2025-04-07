@@ -153,8 +153,8 @@ def main():
     # delattr(exec_args, "job_name")
     exec_args_dict = vars(exec_args)
 
-    print("[DEBUG] exec_args_dict:", exec_args_dict)
-    print("[DEBUG] unknown_args:", unknown_args)
+    # print("[DEBUG] exec_args_dict:", exec_args_dict)
+    # print("[DEBUG] unknown_args:", unknown_args)
 
     # If we are running on slurm already, execute function direction
     if is_this_a_slurm_job():
@@ -184,13 +184,14 @@ def main():
     # Slurm exists, create a .slurm script and execute via sbash
     slurm_args = create_slurm_args(meta, unknown_args)
     is_array_task = "--array" in slurm_args or "-a" in slurm_args
-    output_file = Path.home() / "slurm_logs" / ("%A_%a.out" if is_array_task else "%j.out")
+    output_dir = Path.home() / "slurm_logs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / ("%A_%a.out" if is_array_task else "%j.out")
     script = create_slurm_script(meta, slurm_args, output_file, unknown_args)
     script_dir = Path.cwd() / ".slurmexec"
     script_dir.mkdir(exist_ok=True)
     script_file = script_dir / f"{path.stem}__{func.__name__}.slurm"
     script_file.write_text(script)
-    print(f"Slurm script created at {script_file}")    
 
     # Run sbatch script
     try:
@@ -200,15 +201,14 @@ def main():
         output = e.output.decode("utf-8")
     except Exception as e:
         raise RuntimeError(f"An unexpected error occurred: {e}")
-        # output = "Submitted batch job 123456"
+    # print(f"[DEBUG] Slurm output: {output}")
     
     out_data = {
         "success": True,
+        "message": output,
         "script_file": str(script_file),
         "is_array_task": is_array_task,
     }
-
-    print(f"Slurm output: {output}")
     
     if output.startswith("Submitted batch job"):
         job_id = output.rsplit(" ", maxsplit=1)[-1] # last item
@@ -216,18 +216,18 @@ def main():
 
         out_data["job_id"] = job_id
         out_data["log_file"] = log_file
-        print("Status: SUCCESS")
-        print(f"Slurm job id: {job_id}")
-        print(f"Script file: {script_file}")
-        print(f"Log file: {log_file}")
+        print("*** Status: SUCCESS")
+        print(f"*** Slurm job id: {job_id}")
+        print(f"*** Script file: {script_file}")
+        print(f"*** Log file: {log_file}")
     else:
         out_data["success"] = False
-        print("Status: FAIL [!!!]")
-        print(f"Script file: {script_file}")
-        print(f"Error:")
+        print("*** Status: FAIL [!!!]")
+        print(f"*** Script file: {script_file}")
+        print(f"*** Error:")
         
         for line in output.split("\n"):
-            print(f"{line}")
+            print(f"*** {line}")
     
     print(out_data)
     
