@@ -20,4 +20,3 @@ Tracker = "https://github.com/chaseking/remoteexec/issues"
 [project.scripts]
 remoteexec = "remoteexec.remoteexec_client:main"
 slurmexec = "remoteexec.slurmexec_client:main"
-remoteslurmexec = "remoteexec.remoteslurmexec_client:main"
