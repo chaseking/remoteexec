@@ -1,11 +1,7 @@
-import argparse
 from pathlib import Path
-from os.path import join as path_join
-import ast
 import sys
 from typing import Optional
 import subprocess
-import inspect
 from shlex import quote as _quote_cmdline_str
 
 from .slurm import is_this_a_slurm_job, set_slurm_debug, SlurmJobMeta, SLURM_LOG_EOF_MESSAGE
@@ -129,6 +125,10 @@ def main():
         if callable(func) and hasattr(func, "_slurm_job_meta"):
             slurm_job_fns[name] = func
     
+    if len(slurm_job_fns) == 0:
+        print("No slurm jobs found in the file. Please annotate a function with @slurm_job.")
+        sys.exit(1)
+
     if func_name is None:
         if len(slurm_job_fns) == 1:
             func_name = next(iter(slurm_job_fns.keys()))
