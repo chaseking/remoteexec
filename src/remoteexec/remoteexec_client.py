@@ -81,23 +81,25 @@ def handle_slurmexec_logs(args, output_lines: list[str]):
     print()
     wait_seconds = 3
     try:
+        from .base import SLURM_LOG_EOF_MESSAGE
         ssh_exec(
             remote=args.remote,
             command=f"tail --retry -f {log_file}",
             title=None,
-            end_check = lambda line: line.startswith("# END")
+            end_check = lambda line: line.strip().equals(SLURM_LOG_EOF_MESSAGE)
         )
     except KeyboardInterrupt:
         print(f"\nExiting log viewer. Press Ctrl+C again to cancel task, otherwise wait {wait_seconds} seconds.")
-    
-    import time
-    try:
-        time.sleep(wait_seconds)
-        print(f"Exiting log viewer. Task {job_details['job_id']} is possibly still running in background.")
-    except KeyboardInterrupt:
-        print(f"\nCancelling task with ID {job_details['job_id']}...")
-        return_code, _ = ssh_exec(remote=args.remote, command=f"scancel {job_details['job_id']}", silent=True)
-        if return_code == 0:
-            print("Task cancelled.")
-        else:
-            print(f"Failed to cancel task (return code {return_code})")
+        
+        import time
+        try:
+            time.sleep(wait_seconds)
+            print(f"Exiting log viewer. Task {job_details['job_id']} is possibly still running in background.")
+        except KeyboardInterrupt:
+            print(f"\nCancelling task with ID {job_details['job_id']}...")
+            # output of scancel is always blank
+            return_code, _ = ssh_exec(remote=args.remote, command=f"scancel {job_details['job_id']}", silent=True)
+            if return_code == 0:
+                print("Task cancelled.")
+            else:
+                print(f"Failed to cancel task (return code {return_code})")

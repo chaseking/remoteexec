@@ -8,7 +8,7 @@ import subprocess
 import inspect
 from shlex import quote as _quote_cmdline_str
 
-from .slurm import is_this_a_slurm_job, set_slurm_debug, SlurmJobMeta
+from .slurm import is_this_a_slurm_job, set_slurm_debug, SlurmJobMeta, SLURM_LOG_EOF_MESSAGE
 from .utils import load_func_argparser
 
 def load_module_from_file(path: Path):
@@ -95,7 +95,7 @@ echo
 echo "# Executing command: {exec_command}"
 {exec_command}
 
-echo "# END"
+echo "{SLURM_LOG_EOF_MESSAGE}"
 
 # End of script
 """

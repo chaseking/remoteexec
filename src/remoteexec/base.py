@@ -29,7 +29,7 @@ def _popen(cmd, title: Optional[str] = None, silent: bool = False, end_check = N
             if not silent:
                 print("║", line, end="")
             if end_check is not None and end_check(line):
-                break
+                process.terminate()
         return_code = process.wait()
     if not silent:
         print("╚" + "═"*width + f" --> {return_code}")
