@@ -163,7 +163,7 @@ def main():
 
     # Check if slurm is available
     try:
-        subprocess.check_output("sbash")
+        subprocess.check_output(["slurmd", "-V"])  # this should just print version
     except Exception:
         # Slurm is not available, run locally
         print()
@@ -199,8 +199,8 @@ def main():
     except subprocess.CalledProcessError as e:
         output = e.output.decode("utf-8")
     except Exception as e:
-        # raise RuntimeError(f"An unexpected error occurred: {e}")
-        output = "Submitted batch job 123456"
+        raise RuntimeError(f"An unexpected error occurred: {e}")
+        # output = "Submitted batch job 123456"
     
     out_data = {
         "success": True,
