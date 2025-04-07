@@ -240,10 +240,12 @@ def slurm_job(
                 raise RuntimeError(f"Function {func.__name__} cannot be run outside of a slurm job. Please use slurm_exec() to run this job.")
         wrapper._is_slurm_job = True # Tags the function as a slurm job
 
-        meta = SlurmJobMeta(job_name=job_name, slurm_args=slurm_args, pre_run_commands=pre_run_commands)
+        meta = SlurmJobMeta(
+            job_name = (job_name or func.__name__),
+            slurm_args = slurm_args,
+            pre_run_commands = pre_run_commands
+        )
         # print("Got unknown meta kwargs:", meta_kwargs)
-        if meta.job_name is None:
-            meta.job_name = func.__name__
         wrapper._slurm_job_meta = meta
         return wrapper
     return decorator
