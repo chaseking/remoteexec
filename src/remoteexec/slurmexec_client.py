@@ -225,26 +225,6 @@ def main():
     
     print(out_data)
     
-    # Load job name: "{filename}-{func_name}"
-    # func_file = Path(inspect.getfile(func.__wrapped__))  # the file of the function (wrapped used because otherwise it would return the decorator file)
-    # full_job_name = f"{func.__name__}() in {func_file}"
-    
-    # if job_name is None:
-    #     func_filename = func_file.name
-    #     func_filename = func_filename[:func_filename.rindex(".")]
-    #     job_name = f"{func_filename}-{func.__name__}"
-    
-    # job_name = job_name.format(**exec_args_dict)
-
-    # script_dir = Path.home() / "slurmexec_scripts"
-    # script_file = script_dir / f"{job_name}.slurm"
-
-
-    # slurm_exec(func)
-    
-
-
-
 
     # parser = argparse.ArgumentParser(description="Execute slurm job.")
     # parser.add_argument("filename", type=str, help="Python file (e.g., 'script.py')")
@@ -284,21 +264,3 @@ def main():
     # func = getattr(module, args.func)
     
     # slurm_exec(func)
-
-
-def slurm_exec(
-    func: callable,
-):
-    assert hasattr(func, "_slurm_job_meta")
-    meta = func._slurm_job_meta
-
-    parser = load_func_argparser(func)
-    parser.add_argument("--job_name", type=str, default=meta.name, help=f"Name of the slurm job. (Default: \"{meta.name}\")")
-    exec_args, unknown_args = parser.parse_known_args()
-    job_name = exec_args.job_name
-    delattr(exec_args, "job_name")
-    exec_args_dict = vars(exec_args)
-
-    print("exec_args_dict:", exec_args_dict)
-    print("unknown_args:", unknown_args)
-    # func(**exec_args_dict)

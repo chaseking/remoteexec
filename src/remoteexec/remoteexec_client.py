@@ -2,38 +2,49 @@ import argparse
 from pathlib import Path
 from os.path import join as path_join
 import sys
+from shlex import quote as _quote_cmdline_str
 
 from .base import rsync, ssh_exec, ssh_exec_cd_and_python, _popen
 
 def main():
     parser = argparse.ArgumentParser(description="Execute file remotely.")
-    parser.add_argument("executable", type=str, help="Remote executable (e.g., 'python script.py')")
+    parser.add_argument("executable", nargs=argparse.REMAINDER, help="Remote executable (e.g., 'python script.py')")
     parser.add_argument("--remote", type=str, required=True, help="SSH of the remote server")
     parser.add_argument("--parent", type=str, default=None, help="Parent directory to copy to remote. Defaults to cwd.")
     # parser.add_argument("--dirname_prefix", type=str, default="remoteexec_", help="Remote directory name prefix.")
     parser.add_argument("--dst", type=str, default="~/_remoteexec_srcs/", help="Destination directory on remote server.")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
 
     args = parser.parse_args()
+    args.executable = " ".join(args.executable)
+    if not args.executable:
+        print("No executable provided; supply a command.")
+        sys.exit(1)
     args.parent = Path(args.parent).resolve() if args.parent else Path.cwd()
 
     if not args.parent.exists():
         print(f"Parent directory {args.parent} does not exist.")
         sys.exit(1)
-
+    
+    if not args.verbose:
+        print(f"Copying {args.parent} to {args.remote}:{args.dst} ...", end="", flush=True)
     rsync(
         src=args.parent,
         dst=f"{args.remote}:{args.dst}",
         args=["--exclude", ".git/"],  # TODO: customizable?
-        verbose=False,
+        silent=(not args.verbose),
     )
+    if not args.verbose:
+        print(" done")
     dir_on_remote = path_join(args.dst, args.parent.name)
 
     # Run the job
-    command = f"cd {dir_on_remote} && {args.executable}"
+    # command = f"cd {dir_on_remote} && 'bash -l -c \"{args.executable}\"'"
+    command = ["cd", dir_on_remote, "&&", "bash", "-l", "-c", _quote_cmdline_str(args.executable)]
     ssh_exec(
         remote = args.remote,
         command = command,
-        title = f"[@{args.remote}]> {args.executable}",
+        title = f"[{args.remote}:{dir_on_remote}] > {args.executable}",
     )
     
     # return_code, output_lines = ssh_exec_cd_and_python(

@@ -13,7 +13,7 @@ def _popen(cmd, title: Optional[str] = None, silent: bool = False, **kwargs):
         # print("")
         print("╔" + "═"*width + "╗")
         if title is not None:
-            print(f"║  {title}")
+            print(f"║ {title}")
             print("╟" + "─"*width + "╢")
     output_lines = []
     with subprocess.Popen(
@@ -27,7 +27,7 @@ def _popen(cmd, title: Optional[str] = None, silent: bool = False, **kwargs):
         for line in process.stdout:
             output_lines.append(line)
             if not silent:
-                print("║ ", line, end="")
+                print("║", line, end="")
         return_code = process.wait()
     if not silent:
         print("╚" + "═"*width + f" --> {return_code}")
@@ -35,17 +35,17 @@ def _popen(cmd, title: Optional[str] = None, silent: bool = False, **kwargs):
     return return_code, output_lines
 
 
-def rsync(src: any, dst: str, args: Optional[list[str]] = None, verbose: bool = True, title: Optional[str] = "Syncing {src} to {dst}"):
+def rsync(src: any, dst: str, args: Optional[list[str]] = None, title: Optional[str] = "Syncing {src} to {dst}", **kwargs):
     """Sync a file to a remote host using rsync."""
     src = str(src)
     if title is not None:
         title = title.format(src=src, dst=dst)
-    command = ["rsync", "-avz" if verbose else "-az", "--progress"]
+    command = ["rsync", "-avz", "--progress"]
     if args is not None:
         command.extend(args)
     command.append(src)
     command.append(dst)
-    return _popen(command, title=title)
+    return _popen(command, title=title, **kwargs)
 
 def ssh_exec(remote: str, command: str | list[str], title: Optional[str] = None, **kwargs):
     """Execute a command on a remote host using ssh."""
