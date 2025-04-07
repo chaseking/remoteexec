@@ -216,18 +216,12 @@ def main():
 
         out_data["job_id"] = job_id
         out_data["log_file"] = log_file
-        print("*** Status: SUCCESS")
-        print(f"*** Slurm job id: {job_id}")
-        print(f"*** Script file: {script_file}")
-        print(f"*** Log file: {log_file}")
+        print(output)
+        print(f"Script file: {script_file}")
+        print(f"Log file: {log_file}")
     else:
-        out_data["success"] = False
-        print("*** Status: FAIL [!!!]")
-        print(f"*** Script file: {script_file}")
-        print(f"*** Error:")
-        
-        for line in output.split("\n"):
-            print(f"*** {line}")
+        print("Failed to submit batch job:", output)
+        print(f"Script file: {script_file}")
     
     print(out_data)
     
