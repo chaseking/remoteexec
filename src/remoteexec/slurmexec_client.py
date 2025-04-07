@@ -95,6 +95,8 @@ echo
 echo "# Executing command: {exec_command}"
 {exec_command}
 
+echo "# END"
+
 # End of script
 """
     return script

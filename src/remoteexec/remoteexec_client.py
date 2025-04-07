@@ -15,8 +15,8 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
 
     args, executable_args = parser.parse_known_args()
-    print("[DEBUG]", executable_args)
-    print("[DEBUG] sys.argv", sys.argv)
+    # print("[DEBUG]", executable_args)
+    # print("[DEBUG] sys.argv", sys.argv)
     
     if len(executable_args) == 0:
         print("No executable provided; supply a command.")
@@ -41,64 +41,63 @@ def main():
 
     # Run the job
     # command = f"cd {dir_on_remote} && 'bash -l -c \"{args.executable}\"'"
-    # quoted_executable_args = list(map(_quote_cmdline_str, executable_args))
-    command = ["cd", dir_on_remote, "&&", "bash", "-l", "-c", *executable_args]
-    ssh_exec(
+    quoted_executable_args = map(_quote_cmdline_str, executable_args)
+    command = ["cd", dir_on_remote, "&&", "bash", "-l", "-c", "\"" + " ".join(quoted_executable_args) + "\""]
+    return_code, output_lines = ssh_exec(
         remote = args.remote,
         command = command,
         title = f"[{args.remote}:{dir_on_remote}] > {' '.join(executable_args)}"
     )
-    
-    # return_code, output_lines = ssh_exec_cd_and_python(
-    #     remote=args.remote,
-    #     dirname=path_join(args.dst, args.parent.name),
-    #     filename=relative_file,
-    #     args=[*sys.argv[1:]],
-    # )
-    # if return_code != 0:
-    #     print(f"Error in job (return code {return_code})")
-    #     return
+
+    if executable_args[0] == "slurmexec":
+        handle_slurmexec_logs(args, output_lines)
+    else:
+        sys.exit(return_code)
 
 
-    # job_details = output_lines[-1]  # see (*), last line in main_remote
-    # del output_lines
-    # from ast import literal_eval
-    # try:
-    #     job_details = literal_eval(job_details)
-    # except Exception as e:
-    #     # print("Failed to parse job details:", e)
-    #     return
+def handle_slurmexec_logs(args, output_lines: list[str]):
+    job_details = output_lines[-1]  # see (*), last line in main_remote
+    del output_lines
+    from ast import literal_eval
+    try:
+        job_details = literal_eval(job_details)
+    except Exception as e:
+        # print("Failed to parse job details:", e)
+        return
     
-    # if not job_details["success"]:
-    #     print("Job failed:", job_details)
-    #     return
+    if not job_details["success"]:
+        print("Job failed:", job_details)
+        return
     
-    # if job_details["is_array_task"]:
-    #     # print("Job is an array task, no viewing option available.")
-    #     return
+    if job_details["is_array_task"]:
+        # print("Job is an array task, no viewing option available.")
+        return
     
-    # log_file = job_details["log_file"]
-    # print()
-    # print(f"Below is the log file of the job (ID {job_details['job_id']}) (path: {REMOTE_NAME}:{log_file})")
-    # print("Press Ctrl+C to exit log viewer and leave task running in background.")
-    # print("Press Ctrl+C twice to exit this log viewer and CANCEL task.")
-    # print()
-    # wait_seconds = 3
-    # try:
-    #     ssh_exec(remote=REMOTE_NAME, command=f"tail --retry -f {log_file}", title=None)
-    # except KeyboardInterrupt:
-    #     print(f"\nExiting log viewer. Press Ctrl+C again to cancel task, otherwise wait {wait_seconds} seconds.")
+    log_file = job_details["log_file"]
+    print()
+    print(f"Below is the log file of the job (ID {job_details['job_id']}) (path: {args.remote}:{log_file})")
+    print("Press Ctrl+C to exit log viewer and leave task running in background.")
+    print("Press Ctrl+C twice to exit this log viewer and CANCEL task.")
+    print()
+    wait_seconds = 3
+    try:
+        ssh_exec(
+            remote=args.remote,
+            command=f"tail --retry -f {log_file}",
+            title=None,
+            end_check = lambda line: line.startswith("# END")
+        )
+    except KeyboardInterrupt:
+        print(f"\nExiting log viewer. Press Ctrl+C again to cancel task, otherwise wait {wait_seconds} seconds.")
     
-    # import time
-    # try:
-    #     time.sleep(wait_seconds)
-    #     print(f"Exiting log viewer. Task {job_details['job_id']} is still running in background.")
-    # except KeyboardInterrupt:
-    #     print(f"\nCancelling task with ID {job_details['job_id']}...")
-    #     return_code, _ = ssh_exec(remote=REMOTE_NAME, command=f"scancel {job_details['job_id']}", silent=True)
-    #     if return_code == 0:
-    #         print("Task cancelled.")
-    #     else:
-    #         print(f"Failed to cancel task (return code {return_code})")
-
-    # print(args)
+    import time
+    try:
+        time.sleep(wait_seconds)
+        print(f"Exiting log viewer. Task {job_details['job_id']} is possibly still running in background.")
+    except KeyboardInterrupt:
+        print(f"\nCancelling task with ID {job_details['job_id']}...")
+        return_code, _ = ssh_exec(remote=args.remote, command=f"scancel {job_details['job_id']}", silent=True)
+        if return_code == 0:
+            print("Task cancelled.")
+        else:
+            print(f"Failed to cancel task (return code {return_code})")
