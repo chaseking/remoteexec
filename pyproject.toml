@@ -1,0 +1,23 @@
+[project]
+name = "remoteexec"
+version = "1.0.0"
+description = "Remote-host python executor."
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Chase King", email = "iamchaseking@gmail.com"},
+]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3"
+
+[project.urls]
+Source = "https://github.com/chaseking/remoteexec"
+Tracker = "https://github.com/chaseking/remoteexec/issues"
+
+[project.scripts]
+remoteexec = "remoteexec.remoteexec_client:main"
+slurmexec = "remoteexec.slurmexec_client:main"
+remoteslurmexec = "remoteexec.remoteslurmexec_client:main"
