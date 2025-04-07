@@ -221,11 +221,13 @@ def slurm_job(
     job_name: Optional[str] = None,
     slurm_args: dict[str, any] = {},
     pre_run_commands: list[str] = [],
-    # **meta_kwargs
+    **other_slurm_args
 ):
     """
     Function decorator to be applied to a function representing a Slurm job.
     """
+    for k, v in other_slurm_args.items():
+        slurm_args[f"--{k}"] = v
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
