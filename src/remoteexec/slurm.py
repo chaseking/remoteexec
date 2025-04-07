@@ -12,6 +12,8 @@ from .utils import get_env_var, load_func_argparser
 
 __all__ = ["get_slurm_id", "is_this_a_slurm_job", "slurm_job", "slurm_exec", "set_slurm_debug"]
 
+SLURM_LOG_EOF_MESSAGE = "# END OF SLURM JOB"
+
 _IS_SLURM_DEBUG = False
 
 def set_slurm_debug(debug: bool = True, silent: bool = False):

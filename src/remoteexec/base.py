@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+
 def _popen(cmd, title: Optional[str] = None, silent: bool = False, end_check = None, **kwargs):
     """Run a command and return the process return code."""
     if not silent:
