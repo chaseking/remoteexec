@@ -230,7 +230,7 @@ def slurm_job(
     for k, v in other_slurm_args.items():
         slurm_args[f"--{k}"] = v
     if conda_env is not None:
-        pre_run_commands.append(f"conda activate {conda_env}")
+        pre_run_commands.insert(0, f"conda activate {conda_env}")
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
