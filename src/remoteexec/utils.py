@@ -2,10 +2,10 @@ import os
 import inspect
 import argparse
 import typing
-from argparse import Namespace
+from types import SimpleNamespace
 
-def compile_current_function_args(**kwargs):
-    """Compiles the arguments of the current function into a Namespace object."""
+def compile_current_function_args(as_namespace: bool = False, **kwargs):
+    """Compiles the arguments of the current function into a dict or namespace."""
     frame = inspect.currentframe().f_back
     if frame is None:
         raise ValueError("No frame found")
@@ -14,7 +14,7 @@ def compile_current_function_args(**kwargs):
     # locals is the dictionary of local variables in the function (superset of arg_names, including locally-defined values)
     args = {arg: locals[arg] for arg in arg_names}
     args.update(kwargs)
-    return Namespace(**args)
+    return SimpleNamespace(**args) if as_namespace else args
 
 def get_env_var(*varnames):
     """
