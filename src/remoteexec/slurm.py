@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from .utils import load_func_argparser
 
-__all__ = ["get_slurm_id", "is_this_a_slurm_job", "slurm_job", "slurm_exec", "set_slurm_debug"]
+__all__ = ["get_slurm_id", "is_this_a_slurm_job", "is_slurm_array_job", "get_slurm_array_job", "slurm_job", "slurm_exec", "set_slurm_debug"]
 
 SLURM_LOG_EOF_MESSAGE = "# END OF SLURM JOB"
 
