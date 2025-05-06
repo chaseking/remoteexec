@@ -88,7 +88,7 @@ echo
 
 {pre_run_commands_str}
 
-echo "# Executing command: {exec_command}"
+echo "# > {exec_command}"
 echo
 
 {exec_command}
@@ -169,7 +169,11 @@ def main():
     # Check if slurm is available
     try:
         subprocess.check_output(["slurmd", "-V"])  # this should just print version
+        slurm_available = True
     except Exception:
+        slurm_available = False
+
+    if not slurm_available:
         # Slurm is not available, run locally
         print()
         print("*** Slurm not available; running job locally")

@@ -7,11 +7,12 @@ from shlex import quote as _quote_cmdline_str
 from .base import rsync, ssh_exec, ssh_exec_cd_and_python, _popen
 
 def main():
+    default_dst = "~/_remoteexec_srcs/"
     parser = argparse.ArgumentParser(description="Execute file remotely.")
     parser.add_argument("--remote", type=str, required=True, help="SSH of the remote server")
-    parser.add_argument("--parent", type=str, default=None, help="Parent directory to copy to remote. Defaults to cwd.")
+    parser.add_argument("--parent", type=str, default=None, help="Parent directory to copy to remote. Defaults to cwd")
     # parser.add_argument("--dirname_prefix", type=str, default="remoteexec_", help="Remote directory name prefix.")
-    parser.add_argument("--dst", type=str, default="~/_remoteexec_srcs/", help="Destination directory on remote server.")
+    parser.add_argument("--dst", type=str, default=default_dst, help=f"Destination directory on remote server. Defaults to {default_dst}")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
 
     args, executable_args = parser.parse_known_args()

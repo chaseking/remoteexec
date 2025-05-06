@@ -92,7 +92,8 @@ def load_func_argparser(func, ignore=None):
             kwargs["default"] = default
             if default is False:
                 kwargs["help"] += f" Use `--{name}` to set to True. (Alternatively `--{name} True/False`)"
-            kwargs["help"] += f" Use `--{name} True/False` to change."
+            else:
+                kwargs["help"] += f" Use `--{name} True/False` to change."
 
         parser.add_argument(f"--{name}", **kwargs)
     

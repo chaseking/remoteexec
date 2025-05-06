@@ -1,3 +1,4 @@
+import os
 import sys
 import subprocess
 from pathlib import Path
@@ -8,7 +9,7 @@ from shlex import quote as _quote_cmdline_str
 from typing import Optional, List, Dict, NamedTuple
 from types import SimpleNamespace
 
-from .utils import get_env_var, load_func_argparser
+from .utils import load_func_argparser
 
 __all__ = ["get_slurm_id", "is_this_a_slurm_job", "slurm_job", "slurm_exec", "set_slurm_debug"]
 
@@ -39,11 +40,20 @@ def get_slurm_id():
     if _IS_SLURM_DEBUG:
         return "SLURM_DEBUG"
     else:
-        return get_env_var("SLURM_JOB_ID")
+        return os.environ.get("SLURM_JOB_ID", -1)
 
 def is_this_a_slurm_job():
     global _IS_SLURM_DEBUG
-    return get_env_var("SLURM_JOB_ID") is not None or _IS_SLURM_DEBUG
+    return "SLURM_JOB_ID" in os.environ or _IS_SLURM_DEBUG
+
+
+def is_slurm_array_job():
+    """Checks if the current job is a slurm array job."""
+    return "SLURM_ARRAY_JOB_ID" in os.environ
+
+
+def get_slurm_array_job():
+    return os.environ.get("SLURM_ARRAY_JOB_ID", None), os.environ.get("SLURM_ARRAY_TASK_ID", None)
 
 
 def parse_slurm_jobs_without_importing(path: Path) -> dict[str, dict[str, any]]:
