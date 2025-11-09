@@ -268,7 +268,7 @@ def slurm_exec(
     job_name: Optional[str] = None,
     slurm_args: Optional[Dict[str, any]] = None,
     pre_run_commands: Optional[List[str]] = None,
-    srun: bool = True,
+    srun: bool = False,
     **kwargs
 ):
     """Runs a slurm job. Used in the main method of a .py file.
