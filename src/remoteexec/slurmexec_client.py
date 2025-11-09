@@ -3,15 +3,37 @@ import sys
 from typing import Optional
 import subprocess
 from shlex import quote as _quote_cmdline_str
+from contextlib import contextmanager
+from types import ModuleType
+from importlib.util import spec_from_file_location, module_from_spec
 
 from .slurm import is_this_a_slurm_job, set_slurm_debug, SlurmJobMeta, SLURM_LOG_EOF_MESSAGE
 from .utils import load_func_argparser
 
-def load_module_from_file(path: Path):
-    from importlib.util import spec_from_file_location, module_from_spec
-    spec = spec_from_file_location(name=path.stem, location=str(path))
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
+
+@contextmanager
+def add_to_sys_path(target_path: Path):
+    path_str = str(target_path.resolve())    
+    if path_str in sys.path:
+        # Path is already in sys.path, so we can just yield
+        yield
+    else:
+        # Path is not in sys.path, so we need to add it and then remove it after yielding
+        sys.path.insert(0, path_str)
+        try:
+            yield
+        finally:
+            sys.path.remove(path_str)
+
+def load_module_from_file(path: Path) -> ModuleType:
+    with add_to_sys_path(path.parent):
+        spec = spec_from_file_location(name=path.stem, location=str(path))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not create module spec from {path}")
+        module = module_from_spec(spec)
+        sys.modules[spec.name] = module  # Register module before executing it
+        spec.loader.exec_module(module)
+        
     return module
 
 def create_slurm_args(meta: SlurmJobMeta, unknown_args: Optional[list[str]] = None):

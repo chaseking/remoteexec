@@ -1,4 +1,4 @@
-from slurmexec import *
+from remoteexec.slurmexec import *
 
 if is_this_a_slurm_job():
     import time

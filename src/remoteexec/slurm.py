@@ -53,7 +53,7 @@ def is_slurm_array_job():
 
 
 def get_slurm_array_job():
-    return os.environ.get("SLURM_ARRAY_JOB_ID", None), os.environ.get("SLURM_ARRAY_TASK_ID", None)
+    return int(os.environ.get("SLURM_ARRAY_JOB_ID", -1)), int(os.environ.get("SLURM_ARRAY_TASK_ID", -1))
 
 
 def parse_slurm_jobs_without_importing(path: Path) -> dict[str, dict[str, any]]:

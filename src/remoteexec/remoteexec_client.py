@@ -13,9 +13,10 @@ def main():
     parser.add_argument("--parent", type=str, default=None, help="Parent directory to copy to remote. Defaults to cwd")
     # parser.add_argument("--dirname_prefix", type=str, default="remoteexec_", help="Remote directory name prefix.")
     parser.add_argument("--dst", type=str, default=default_dst, help=f"Destination directory on remote server. Defaults to {default_dst}")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
+    # parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output.")
 
     args, executable_args = parser.parse_known_args()
+    args.verbose = False
     # print("[DEBUG]", executable_args)
     # print("[DEBUG] sys.argv", sys.argv)
     
@@ -33,7 +34,7 @@ def main():
     rsync(
         src=args.parent,
         dst=f"{args.remote}:{args.dst}",
-        args=["--exclude", ".git/"],  # TODO: customizable?
+        args=["--exclude", ".git/", "--exclude=\".*\""],  # TODO: customizable?
         silent=(not args.verbose),
     )
     if not args.verbose:
