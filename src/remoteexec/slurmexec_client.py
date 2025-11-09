@@ -63,6 +63,7 @@ def create_slurm_script(
     slurm_args: dict[str, str],
     output_file: str,
     unknown_args: Optional[list[str]] = None,
+    srun: bool = False
 ):    
     # Set output file name as "{job id}_{array task id}"
     # %A is the slurm array parent job id
@@ -87,7 +88,7 @@ def create_slurm_script(
         if arg not in unknown_args:  # ignore unk_args, which are assumed to be slurm arguments
             exec_args_slurm.append(_quote_cmdline_str(arg))
 
-    exec_command = f"srun slurmexec {' '.join(exec_args_slurm)}"
+    exec_command = f"{'srun ' if srun else ''}slurmexec {' '.join(exec_args_slurm)}"
     pre_run_commands_str = "\n".join(meta.pre_run_commands)
     
 
