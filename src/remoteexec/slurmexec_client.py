@@ -139,7 +139,14 @@ def main():
         print(f"File '{path}' does not exist.")
         sys.exit(1)
 
-    module = load_module_from_file(path)
+    try:
+        module = load_module_from_file(path)
+    except Exception as e:
+        import traceback
+        print("Failed to import Python file due to exception:")
+        traceback.print_exc()
+        sys.exit(1)
+    
     slurm_job_fns = {}
 
     for name in dir(module):
