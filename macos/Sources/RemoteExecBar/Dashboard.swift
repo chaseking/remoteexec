@@ -64,7 +64,18 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         w.titleVisibility = .hidden
         w.titlebarAppearsTransparent = true
         w.backgroundColor = Self.pageBackground
-        w.contentView = web
+        // The web view would take every click under the transparent titlebar,
+        // leaving nothing to drag the window by; a native strip sits on top.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
+        web.frame = container.bounds
+        web.autoresizingMask = [.width, .height]
+        container.addSubview(web)
+        let titlebar = max(28, w.frame.height - w.contentLayoutRect.height)
+        let drag = TitlebarDragView(frame: NSRect(x: 0, y: container.bounds.height - titlebar,
+                                                  width: container.bounds.width, height: titlebar))
+        drag.autoresizingMask = [.width, .minYMargin]
+        container.addSubview(drag)
+        w.contentView = container
         w.minSize = NSSize(width: 760, height: 460)
         w.isReleasedWhenClosed = false
         w.delegate = self
@@ -128,5 +139,21 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
         showError(error.localizedDescription)
+    }
+}
+
+/// Drags the window (double-click: zoom/minimize per the system setting) for
+/// the strip under the transparent titlebar, where the page has no controls.
+final class TitlebarDragView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 2 else {
+            window?.performDrag(with: event)
+            return
+        }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window?.performMiniaturize(nil)
+        case "None": break
+        default: window?.performZoom(nil)
+        }
     }
 }
