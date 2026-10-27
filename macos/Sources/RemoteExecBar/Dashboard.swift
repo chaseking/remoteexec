@@ -43,34 +43,41 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     }
 
     private func build() {
+        // Content runs edge to edge under a transparent titlebar, like the
+        // Claude app: one surface, with the traffic lights over the sidebar and
+        // the title right after them (a compact unified toolbar puts it there).
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                         backing: .buffered, defer: false)
+        w.title = "remoteexec"
+        w.toolbar = NSToolbar(identifier: "dashboard")
+        w.toolbarStyle = .unifiedCompact
+        w.titleVisibility = .visible
+        w.titlebarAppearsTransparent = true
+        w.titlebarSeparatorStyle = .none
+        w.backgroundColor = Self.pageBackground
+        let titlebar = max(28, w.frame.height - w.contentLayoutRect.height)
+
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // keeps the web UI's theme choice
-        // Tells the page it runs under a transparent titlebar, so it keeps the
-        // strip behind the traffic lights free of controls.
+        // Tells the page it runs under the titlebar and how tall that is, so it
+        // keeps the strip free of controls.
         config.userContentController.addUserScript(WKUserScript(
-            source: "window.remoteexecApp = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            source: "window.remoteexecApp = {topInset: \(Int(titlebar))};",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: config)
         web.uiDelegate = self
         web.navigationDelegate = self
         if web.responds(to: NSSelectorFromString("_setDrawsBackground:")) {
             web.setValue(false, forKey: "drawsBackground")  // no white flash before the page paints
         }
-        // Content runs edge to edge under the titlebar, like the Claude app:
-        // one surface, with the traffic lights over the sidebar.
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                         backing: .buffered, defer: false)
-        w.title = "remoteexec"
-        w.titleVisibility = .hidden
-        w.titlebarAppearsTransparent = true
-        w.backgroundColor = Self.pageBackground
+
         // The web view would take every click under the transparent titlebar,
         // leaving nothing to drag the window by; a native strip sits on top.
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
         web.frame = container.bounds
         web.autoresizingMask = [.width, .height]
         container.addSubview(web)
-        let titlebar = max(28, w.frame.height - w.contentLayoutRect.height)
         let drag = TitlebarDragView(frame: NSRect(x: 0, y: container.bounds.height - titlebar,
                                                   width: container.bounds.width, height: titlebar))
         drag.autoresizingMask = [.width, .minYMargin]

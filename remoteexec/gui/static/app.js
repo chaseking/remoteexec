@@ -1137,8 +1137,15 @@ async function openFromUrl() {
 }
 
 function init() {
-  // Set by the macOS app: the page then sits under a transparent titlebar.
-  if (window.remoteexecApp) document.documentElement.classList.add("in-app");
+  // Set by the macOS app: the page then sits under its transparent titlebar,
+  // which shows the window title, so the sidebar's own header is hidden.
+  if (window.remoteexecApp) {
+    document.documentElement.classList.add("in-app");
+    const inset = window.remoteexecApp.topInset;
+    if (typeof inset === "number") {
+      document.documentElement.style.setProperty("--top-inset", `${inset}px`);
+    }
+  }
   initTheme();
   paintIcons();
 

@@ -12,12 +12,14 @@
     <aside class="sidebar">
       <div class="side-top">
         <div class="brand"><span class="ico" data-icon="terminal"></span><span>remoteexec</span></div>
+      </div>
+      <div class="search-row">
+        <label class="search">
+          <span class="ico" data-icon="search"></span>
+          <input id="search" type="search" placeholder="Search jobs" spellcheck="false" autocomplete="off" />
+        </label>
         <button id="refresh-btn" class="icon-btn" title="Refresh"><span class="ico" data-icon="refresh"></span></button>
       </div>
-      <label class="search">
-        <span class="ico" data-icon="search"></span>
-        <input id="search" type="search" placeholder="Search jobs" spellcheck="false" autocomplete="off" />
-      </label>
       <div id="conn-error" class="side-warning hidden"></div>
       <div id="job-list" class="job-list"></div>
       <div class="side-foot">

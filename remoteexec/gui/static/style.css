@@ -51,9 +51,10 @@
 
 /* Inside the macOS app the page runs under a transparent titlebar: the top
    strip (traffic lights, window dragging) stays free of controls. */
-.in-app { --top-inset: 30px; }
-.in-app .side-top { padding-top: 6px; }
-.in-app .job-head { padding-top: calc(8px + var(--top-inset)); }
+.in-app { --top-inset: 38px; }  /* the app sets the real titlebar height */
+.in-app .side-top { display: none; }  /* the window title takes its place */
+.in-app .search-row { padding-top: 4px; }
+.in-app .job-head { padding-top: calc(6px + var(--top-inset)); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -112,11 +113,13 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
 .linkish { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
 
 /* ===== Sidebar ===== */
-.side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 10px 8px 16px; }
+.side-top { display: flex; align-items: center; gap: 8px; padding: 14px 10px 10px 16px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
 .brand .ico { color: var(--text-2); }
+.search-row { display: flex; align-items: center; gap: 4px; padding: 0 8px 6px 12px; }
 .search {
-  display: flex; align-items: center; gap: 7px; margin: 0 12px 6px;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 7px;
   padding: 0 9px; height: 30px; border-radius: 8px; background: var(--field);
   color: var(--text-3);
 }
