@@ -138,7 +138,13 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
   letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2);
 }
 .section .n { color: var(--text-3); }
-.section .pop-wrap { margin-left: auto; }
+.section .pop-wrap { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.spinner {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--text-3); border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .section-btn {
   display: inline-flex; align-items: center; gap: 4px; border: none; background: none;
   padding: 2px 4px; border-radius: 5px; color: var(--text-3); cursor: pointer;

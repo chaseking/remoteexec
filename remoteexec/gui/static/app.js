@@ -10,11 +10,11 @@ const REQUEST_TIMEOUT_MS = 30000;
 const MAX_CONSOLE_CHARS = 1000000;  // keep the console node from growing forever
 const FLUSH_READS = 3;        // extra reads after a job goes terminal
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp)$/i;
-const WINDOWS = [
-  ["finished_6h", "6h", "Last 6 hours"],
-  ["finished_1d", "1d", "Last day"],
-  ["finished_7d", "7d", "Last 7 days"],
-  ["all", "all", "Everything"],
+const WINDOWS = [  // key, label, menu label, hours
+  ["finished_6h", "6h", "Last 6 hours", 6],
+  ["finished_1d", "1d", "Last day", 24],
+  ["finished_7d", "7d", "Last 7 days", 168],
+  ["all", "all", "Everything", 0],
 ];
 
 const state = {
@@ -22,6 +22,8 @@ const state = {
   errors: {},
   listTimer: null,
   listBusy: false,
+  listAgain: false,    // a refresh was asked for while one was in flight
+  loadedWindow: null,  // finished-window the current list was fetched with
   listSig: null,
   listLoaded: false,
   finished: stored("rxfinished", "finished_1d"),
@@ -269,11 +271,19 @@ function initTheme() {
 
 // ---------- sidebar ----------
 async function loadJobs() {
-  if (state.listBusy) return;   // never let two list fetches overlap
+  // Never let two list fetches overlap, but don't drop the second one either:
+  // it may be for a different finished-window.
+  if (state.listBusy) {
+    state.listAgain = true;
+    return;
+  }
   state.listBusy = true;
   try {
-    const filters = state.finished === "all" ? "" : `running,${state.finished}`;
+    const win = state.finished;
+    const filters = win === "all" ? "" : `running,${win}`;
     const data = await api("/api/jobs?filters=" + encodeURIComponent(filters));
+    if (win !== state.finished) return;  // superseded while in flight
+    state.loadedWindow = win;
     state.jobs = data.jobs || [];
     state.errors = data.errors || {};
     state.listLoaded = true;
@@ -287,7 +297,22 @@ async function loadJobs() {
     $("#updated").title = "Update failed — retrying";
   } finally {
     state.listBusy = false;
+    if (state.listAgain) {
+      state.listAgain = false;
+      loadJobs();
+    }
   }
+}
+
+function windowHours(key) {
+  return (WINDOWS.find((w) => w[0] === key) || [])[3] || 0;
+}
+
+// Still fetching jobs for a wider finished-window than the list holds.
+function windowLoading() {
+  const want = windowHours(state.finished), have = windowHours(state.loadedWindow);
+  return state.loadedWindow !== null && state.finished !== state.loadedWindow
+    && (want === 0 || (have !== 0 && want > have));
 }
 
 function visibleJobs() {
@@ -296,7 +321,12 @@ function visibleJobs() {
     .some((v) => (v || "").toLowerCase().includes(q));
   const jobs = state.jobs.filter(hit);
   const active = jobs.filter((j) => isActive(j.status));
+  // A narrower window than the one fetched is applied here, without waiting.
+  const hours = windowHours(state.finished);
+  const cutoff = Date.now() - hours * 3600000;
   const finished = jobs.filter((j) => !isActive(j.status))
+    .filter((j) => !hours || state.loadedWindow === state.finished
+      || (parseTime(j.end) || 0) >= cutoff)
     .sort((a, b) => (b.end || b.submitted_at || "").localeCompare(a.end || a.submitted_at || ""));
   return { active, finished };
 }
@@ -345,14 +375,22 @@ function windowPicker() {
     item.appendChild(el("span", "check", key === state.finished ? "✓" : ""));
     item.appendChild(el("span", null, label));
     item.addEventListener("click", () => {
+      closeMenus();
+      if (key === state.finished) return;
       state.finished = key;
       store("rxfinished", key);
       state.listSig = null;
+      renderSidebar();      // new label + spinner (or the narrower list) now
       startListPolling();
     });
     menu.appendChild(item);
   }
   btn.addEventListener("click", (e) => toggleMenu(menu, e));
+  if (windowLoading()) {
+    const spin = el("span", "spinner");
+    spin.title = "Loading jobs…";
+    wrap.appendChild(spin);
+  }
   wrap.appendChild(btn);
   wrap.appendChild(menu);
   return wrap;
@@ -365,7 +403,7 @@ function renderSidebar() {
   // menu), so skip it when nothing visible changed. The minute is part of the
   // signature so "5m ago" keeps moving.
   const sig = JSON.stringify([active, finished, state.view === "job" && state.detail && state.detail.job_id,
-    state.finished, Math.floor(Date.now() / 60000)]);
+    state.finished, windowLoading(), Math.floor(Date.now() / 60000)]);
   if (sig === state.listSig) return;
   state.listSig = sig;
 
