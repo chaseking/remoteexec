@@ -113,6 +113,13 @@ Everything follows the route — `AxonCluster()`, the CLI, the dashboard and the
 app — and jobs stay listed under `axon` whichever alias submitted them. The dashboard's
 *Clusters & hosts* page edits the same settings (`~/.remoteexec/hosts.json`).
 
+## Menu bar app (macOS)
+
+`macos/` holds a small native menu bar app: a dropdown of running and recently finished
+jobs, a dashboard window (live logs, output files) on click, a host switcher and
+finish notifications. Build it with `macos/build.sh --install`; see
+[`macos/README.md`](macos/README.md).
+
 ## Configuration
 
 Optional `remoteexec.toml` at the project root (or `~/.config/remoteexec/config.toml`):

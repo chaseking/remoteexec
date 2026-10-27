@@ -1,0 +1,38 @@
+name: macos-app
+on:
+  push:
+    paths: ["macos/**", "remoteexec/gui/**", ".github/workflows/macos-app.yml"]
+  pull_request:
+    paths: ["macos/**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - name: Build the app bundle
+        working-directory: macos
+        run: ./build.sh
+      - name: Launch it and check it starts the backend
+        run: |
+          python3 -m venv /tmp/rx && /tmp/rx/bin/pip install -q .
+          defaults write io.github.chaseking.remoteexec.menubar backendCommand /tmp/rx/bin/remoteexec
+          defaults write io.github.chaseking.remoteexec.menubar notify -bool false
+          open macos/build/remoteexec.app
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:8765/api/health && break
+            sleep 1
+          done
+          pgrep -x RemoteExec
+          curl -sf http://127.0.0.1:8765/api/health
+          curl -sf "http://127.0.0.1:8765/api/jobs?filters=running,finished_6h"
+          pkill -x RemoteExec
+          sleep 3
+          # the backend exits with the app (--parent-pid)
+          ! curl -sf http://127.0.0.1:8765/api/health
