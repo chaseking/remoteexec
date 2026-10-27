@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// App preferences, stored in UserDefaults.
@@ -22,43 +23,45 @@ final class AppSettings: ObservableObject {
     }
 }
 
-struct SettingsView: View {
+/// How the app starts its backend. The full Settings live on the jobs
+/// window's Settings page; this window is the way in when the backend can't
+/// start (and that page can't load). A plain stack, explicitly sized: an
+/// unsized grouped Form can come up blank in a hosting window.
+struct BackendSettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var backend: Backend
-    let manageHosts: () -> Void
 
     var body: some View {
-        Form {
-            Section {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("remoteexec CLI").font(.headline)
+            VStack(alignment: .leading, spacing: 6) {
                 TextField("Command", text: $settings.backendCommand,
-                          prompt: Text(Backend.detectCommand() ?? "remoteexec"))
-                TextField("Port", value: $settings.port, format: .number.grouping(.never))
-                HStack {
-                    Text(statusLine).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Restart Backend") { Task { await backend.restart() } }
-                }
-            } header: {
-                Text("Backend")
-            } footer: {
-                Text("How to launch the remoteexec CLI (run in your login shell). Leave empty to "
-                     + "auto-detect, or give e.g. ~/miniconda3/bin/remoteexec or python3 -m remoteexec. "
-                     + "Log: ~/Library/Logs/remoteexec-menubar.log")
+                          prompt: Text(Backend.detectCommand() ?? "auto-detect"))
+                    .textFieldStyle(.roundedBorder)
+                Text("How the app starts `remoteexec gui` in the background. Leave empty to find it "
+                     + "automatically, or give e.g. ~/miniconda3/bin/remoteexec or "
+                     + "/path/to/python -m remoteexec.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Section("Clusters") {
-                Button("Manage clusters & ssh hosts…", action: manageHosts)
+            HStack {
+                Text("Port")
+                TextField("Port", value: $settings.port, format: .number.grouping(.never))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 90)
             }
-            Section("Notifications") {
-                Toggle("Notify when a job finishes", isOn: $settings.notify)
+            Divider()
+            HStack {
+                Text(statusLine).foregroundStyle(.secondary)
+                Spacer()
+                Button("Open Log") { NSWorkspace.shared.open(backend.logURL) }
+                Button("Restart Backend") { Task { await backend.restart() } }
+                    .keyboardShortcut(.defaultAction)
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .onChange(of: settings.notify) { enabled in
-            if enabled { Notifier.shared.setup() }
-        }
+        .padding(20)
+        .frame(width: 500)
     }
 
     private var statusLine: String {

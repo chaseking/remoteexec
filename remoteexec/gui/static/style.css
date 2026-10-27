@@ -51,9 +51,10 @@
 
 /* Inside the macOS app the page runs under a transparent titlebar: the top
    strip (traffic lights, window dragging) stays free of controls. */
-.in-app { --top-inset: 30px; }
-.in-app .side-top { padding-top: 6px; }
-.in-app .job-head { padding-top: calc(8px + var(--top-inset)); }
+.in-app { --top-inset: 38px; }  /* the app sets the real titlebar height */
+.in-app .side-top { display: none; }  /* the window title takes its place */
+.in-app .search-row { padding-top: 4px; }
+.in-app .job-head { padding-top: calc(6px + var(--top-inset)); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -112,11 +113,13 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
 .linkish { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
 
 /* ===== Sidebar ===== */
-.side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 10px 8px 16px; }
+.side-top { display: flex; align-items: center; gap: 8px; padding: 14px 10px 10px 16px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
 .brand .ico { color: var(--text-2); }
+.search-row { display: flex; align-items: center; gap: 4px; padding: 0 8px 6px 12px; }
 .search {
-  display: flex; align-items: center; gap: 7px; margin: 0 12px 6px;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 7px;
   padding: 0 9px; height: 30px; border-radius: 8px; background: var(--field);
   color: var(--text-3);
 }
@@ -135,7 +138,13 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
   letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2);
 }
 .section .n { color: var(--text-3); }
-.section .pop-wrap { margin-left: auto; }
+.section .pop-wrap { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.spinner {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--text-3); border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .section-btn {
   display: inline-flex; align-items: center; gap: 4px; border: none; background: none;
   padding: 2px 4px; border-radius: 5px; color: var(--text-3); cursor: pointer;
@@ -318,13 +327,18 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
 /* ===== Settings ===== */
 .settings { overflow: auto; padding: 4px 24px 28px; border-top: 1px solid var(--line); margin-top: 14px; }
 .group { max-width: 760px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.settings-head { margin: 22px 0 0; font-size: 15px; font-weight: 600; }
+.settings-head + .lead { margin-top: 6px; }
+.row-line.toggle { gap: 8px; margin-top: 0; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }
+.group .small { margin: 10px 0 0; line-height: 1.5; }
 .group-title { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
 .group .row-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .group .label { width: 84px; color: var(--text-2); font-size: 12.5px; }
 .group .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; padding: 0; cursor: default; }
 .group .row:hover { background: none; }
 .grow { flex: 1 1 240px; }
-.settings input, .settings select {
+.settings input:not([type="checkbox"]), .settings select {
   height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line-strong);
   background: var(--raised); color: var(--text); font: 12.5px var(--mono);
 }

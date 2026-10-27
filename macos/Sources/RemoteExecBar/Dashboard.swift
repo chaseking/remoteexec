@@ -4,9 +4,12 @@ import WebKit
 /// The dashboard window: the `remoteexec gui` web UI (jobs, live logs, output
 /// files, cluster/host settings) in a native window.
 @MainActor
-final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
+final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate,
+                                 WKScriptMessageHandler {
     let backend: Backend
     var onClose: (() -> Void)?
+    /// Opens the native backend settings (for when the page can't load).
+    var onOpenBackendSettings: (() -> Void)?
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var currentPath = "/"
@@ -43,28 +46,48 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     }
 
     private func build() {
+        // Content runs edge to edge under a transparent titlebar, like the
+        // Claude app: one surface, with the traffic lights over the sidebar and
+        // the title right after them (a compact unified toolbar puts it there).
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                         backing: .buffered, defer: false)
+        w.title = "remoteexec"
+        w.toolbar = NSToolbar(identifier: "dashboard")
+        w.toolbarStyle = .unifiedCompact
+        w.titleVisibility = .visible
+        w.titlebarAppearsTransparent = true
+        w.titlebarSeparatorStyle = .none
+        w.backgroundColor = Self.pageBackground
+        let titlebar = max(28, w.frame.height - w.contentLayoutRect.height)
+
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // keeps the web UI's theme choice
-        // Tells the page it runs under a transparent titlebar, so it keeps the
-        // strip behind the traffic lights free of controls.
+        // Tells the page it runs under the titlebar and how tall that is, so it
+        // keeps the strip free of controls.
         config.userContentController.addUserScript(WKUserScript(
-            source: "window.remoteexecApp = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            source: "window.remoteexecApp = {topInset: \(Int(titlebar))};",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // The Settings page reads and changes the app's own settings through this.
+        config.userContentController.add(self, name: "remoteexec")
         let web = WKWebView(frame: .zero, configuration: config)
         web.uiDelegate = self
         web.navigationDelegate = self
         if web.responds(to: NSSelectorFromString("_setDrawsBackground:")) {
             web.setValue(false, forKey: "drawsBackground")  // no white flash before the page paints
         }
-        // Content runs edge to edge under the titlebar, like the Claude app:
-        // one surface, with the traffic lights over the sidebar.
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                         backing: .buffered, defer: false)
-        w.title = "remoteexec"
-        w.titleVisibility = .hidden
-        w.titlebarAppearsTransparent = true
-        w.backgroundColor = Self.pageBackground
-        w.contentView = web
+
+        // The web view would take every click under the transparent titlebar,
+        // leaving nothing to drag the window by; a native strip sits on top.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
+        web.frame = container.bounds
+        web.autoresizingMask = [.width, .height]
+        container.addSubview(web)
+        let drag = TitlebarDragView(frame: NSRect(x: 0, y: container.bounds.height - titlebar,
+                                                  width: container.bounds.width, height: titlebar))
+        drag.autoresizingMask = [.width, .minYMargin]
+        container.addSubview(drag)
+        w.contentView = container
         w.minSize = NSSize(width: 760, height: 460)
         w.isReleasedWhenClosed = false
         w.delegate = self
@@ -87,9 +110,52 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         @media (prefers-color-scheme: dark){body{background:#262624;color:#a8a59d}h3{color:#f0eee8}
         pre{background:#1f1e1d}}</style></head>
         <body><h3>Can't reach the remoteexec backend</h3><pre>\(escaped)</pre>
-        <p>Retrying in a few seconds. Check the command in the app's Settings.</p></body></html>
+        <p>Retrying in a few seconds.
+        <a href="#" onclick="webkit.messageHandlers.remoteexec.postMessage({type:'backendSettings'});return false">Backend settings…</a></p>
+        </body></html>
         """
         webView?.loadHTMLString(html, baseURL: nil)
+    }
+
+    // MARK: messages from the page (Settings → Menu bar app)
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        let settings = backend.settings
+        switch type {
+        case "setAppSettings":
+            if let notify = body["notify"] as? Bool {
+                settings.notify = notify
+                if notify { Notifier.shared.setup() }
+            }
+            if let command = body["backendCommand"] as? String { settings.backendCommand = command }
+            if let port = body["port"] as? Int, port > 0 { settings.port = port }
+        case "restartBackend":
+            Task {
+                await backend.restart()
+                webView?.load(URLRequest(url: backend.url("/?view=settings")))  // the port may have changed
+            }
+            return
+        case "backendSettings":
+            onOpenBackendSettings?()
+            return
+        default:
+            break
+        }
+        sendAppSettings()
+    }
+
+    private func sendAppSettings() {
+        let s = backend.settings
+        let payload: [String: Any] = [
+            "notify": s.notify, "backendCommand": s.backendCommand, "port": s.port,
+            "detected": Backend.detectCommand() ?? "", "log": backend.logURL.path,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("window.remoteexecAppSettings && window.remoteexecAppSettings(\(json))",
+                                    completionHandler: nil)
     }
 
     // MARK: NSWindowDelegate
@@ -128,5 +194,21 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
         showError(error.localizedDescription)
+    }
+}
+
+/// Drags the window (double-click: zoom/minimize per the system setting) for
+/// the strip under the transparent titlebar, where the page has no controls.
+final class TitlebarDragView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 2 else {
+            window?.performDrag(with: event)
+            return
+        }
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize": window?.performMiniaturize(nil)
+        case "None": break
+        default: window?.performZoom(nil)
+        }
     }
 }

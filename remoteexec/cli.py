@@ -388,6 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None):
+    state.remember_cli()
     p = build_parser()
     a = p.parse_args(argv)
     if not getattr(a, "func", None):

@@ -16,14 +16,14 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/RemoteExec"
 cp Info.plist "$APP/Contents/Info.plist"
-[ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/" && \
-    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist"
+cp AppIcon.icns "$APP/Contents/Resources/"   # regenerate/replace: see make_icon.py
 codesign --force --deep --sign - "$APP"   # ad-hoc signature (required on Apple Silicon)
 
 if [ "${1:-}" = "--install" ]; then
     pkill -x RemoteExec 2>/dev/null || true
     rm -rf /Applications/remoteexec.app
     cp -R "$APP" /Applications/
+    touch /Applications/remoteexec.app   # nudge Finder/Dock to drop a cached icon
     open /Applications/remoteexec.app
     echo "installed /Applications/remoteexec.app"
 else

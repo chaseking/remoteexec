@@ -95,6 +95,15 @@ def _tarball(files: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
+def _gres(res: SlurmResources) -> str | None:
+    """The job's --gres request(s) for display, e.g. "gpu:1"."""
+    parts = [f"gpu:{res.gpus}"] if res.gpus is not None else []
+    if res.gres:
+        parts.append(res.gres)
+    parts += [d.split("--gres=", 1)[1].strip() for d in res.extra_directives if "--gres=" in d]
+    return ",".join(parts) or None
+
+
 def _name_from_command(command: str) -> str:
     try:
         tokens = shlex.split(command)
@@ -160,6 +169,7 @@ class SlurmCluster(Cluster):
         else:
             self.conn.open()
         self._connected = True
+        state.remember_cli()
 
     def _say(self, msg: str):
         if self.verbose:
@@ -382,7 +392,7 @@ class SlurmCluster(Cluster):
 
     def _record(self, job, use_env, eff, **extra):
         state.record(job, env=env_label(use_env), local_dir=str(self.local_dir),
-                     partition=eff.partition, **extra)
+                     partition=eff.partition, gres=_gres(eff), **extra)
 
     def submit(self, fn, args, kwargs, resources, *, env=None, name=None,
                setup=(), sync=None) -> Job:
@@ -446,7 +456,8 @@ class SlurmCluster(Cluster):
                 for i in range(len(items))]
         label = env_label(use_env)
         state.record_many({j.job_id: state.make_entry(
-            j, env=label, local_dir=str(self.local_dir), partition=eff.partition) for j in jobs})
+            j, env=label, local_dir=str(self.local_dir), partition=eff.partition,
+            gres=_gres(eff)) for j in jobs})
         self._say(f"submitted '{eff.job_name}' as array {array_id} ({len(items)} tasks) on "
                   f"{self.conn.host}{' — code synced' if synced else ''}")
         return JobArray(jobs)

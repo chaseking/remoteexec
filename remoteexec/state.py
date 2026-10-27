@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -126,3 +127,18 @@ def prune(older_than_days: float, *, dry_run: bool = False) -> dict:
         if old and not dry_run:
             write_json(_manifest(), {j: r for j, r in data.items() if j not in old})
     return old
+
+
+def remember_cli() -> None:
+    """Record which Python runs remoteexec (``~/.remoteexec/cli.json``).
+
+    The macOS menu bar app starts ``python -m remoteexec gui`` from this, so
+    it works whatever the login shell's PATH holds (a conda or pyenv setup in
+    ``.zshrc`` isn't read by the non-interactive shell an app gets).
+    """
+    info = {"python": sys.executable, "path": str(Path(__file__).resolve().parent.parent)}
+    try:
+        if read_json(home() / "cli.json") != info:
+            write_json(home() / "cli.json", info)
+    except OSError:
+        pass

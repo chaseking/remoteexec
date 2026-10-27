@@ -70,11 +70,12 @@ def test_shell_command_job(fake_slurm, project, tmp_path):
         "import os, sys, api\n"
         "open(os.environ['REMOTEEXEC_OUTPUT_DIR'] + '/out.txt', 'w').write(str(api.double(21)))\n"
         "print('args', sys.argv[1:])\n")
-    job = c.run("python dir1/go.py --lr 3e-4", partition="ctn")
+    job = c.run("python dir1/go.py --lr 3e-4", partition="ctn", gres="gpu:a100:2")
     assert job.name == "go" and job.kind == "cmd"
     assert job.result(timeout=60) is None
     assert job.read_output("out.txt") == "42"
     assert "args ['--lr', '3e-4']" in job.logs()
+    assert state.get(job.job_id)["gres"] == "gpu:a100:2"
 
     bad = c.run("exit 3", name="bad")
     with pytest.raises(JobFailed):

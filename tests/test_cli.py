@@ -1,6 +1,8 @@
 """CLI against the fake cluster."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from conftest import make_cluster
@@ -82,3 +84,13 @@ def test_clean_is_a_dry_run_unless_confirmed(rx):
     rc, out, _ = rx("clean", "--older-than", "0", "-y")
     assert "removed 1" in out
     assert "no jobs" in rx("ls")[1]
+
+
+def test_cli_records_its_python_for_the_app(rx, rx_home):
+    import json
+    import sys
+
+    rx("host")
+    info = json.loads((rx_home / "cli.json").read_text())
+    assert info["python"] == sys.executable
+    assert (Path(info["path"]) / "remoteexec" / "__init__.py").exists()

@@ -31,7 +31,9 @@ jobs:
       - name: Launch it and check it starts the backend
         run: |
           python3 -m venv /tmp/rx && /tmp/rx/bin/pip install -q . pytest
-          defaults write io.github.chaseking.remoteexec.menubar backendCommand /tmp/rx/bin/remoteexec
+          # not on PATH: the app has to find it from the CLI's record of itself
+          /tmp/rx/bin/remoteexec host ls
+          defaults delete io.github.chaseking.remoteexec.menubar backendCommand 2>/dev/null || true
           defaults write io.github.chaseking.remoteexec.menubar notify -bool false
           open macos/build/remoteexec.app
           for i in $(seq 1 40); do

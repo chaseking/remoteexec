@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openDashboard: { [weak self] in self?.openDashboard(path: "/") },
             openHosts: { [weak self] in self?.openDashboard(path: "/?view=settings") },
             openSettings: { [weak self] in self?.openSettings() },
+            openBackendSettings: { [weak self] in self?.openBackendSettings() },
             quit: { NSApp.terminate(nil) }
         )
         let hosting = NSHostingController(rootView: MenuView(store: store, backend: backend, actions: actions))
@@ -76,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         dashboard.onClose = { [weak self] in self?.refreshActivationPolicy() }
+        dashboard.onOpenBackendSettings = { [weak self] in self?.openBackendSettings() }
         store.$jobs
             .receive(on: RunLoop.main)
             .sink { [weak self] jobs in self?.updateStatusItem(jobs) }
@@ -135,14 +137,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dashboard.show(path: path)
     }
 
+    /// Settings live on the jobs window's Settings page (clusters & hosts,
+    /// and the app's own options).
     func openSettings() {
+        openDashboard(path: "/?view=settings")
+    }
+
+    /// Fallback for when the backend can't start, so the Settings page can't load.
+    func openBackendSettings() {
         popover.performClose(nil)
         if settingsWindow == nil {
-            let view = SettingsView(settings: settings, backend: backend, manageHosts: { [weak self] in
-                self?.openDashboard(path: "/?view=settings")
-            })
+            let view = BackendSettingsView(settings: settings, backend: backend)
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "remoteexec Settings"
+            window.title = "Backend Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
             window.delegate = self
