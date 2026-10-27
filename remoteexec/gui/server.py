@@ -92,6 +92,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(svc.read_log(jid, int(q.get("offset", 0) or 0)))
                 if rest == ["files"]:
                     return self._json(svc.files(jid))
+                if rest == ["script"]:
+                    return self._json(svc.script(jid))
                 if rest == ["file"]:
                     if q.get("raw"):
                         status, ctype, body = svc.raw(jid, q.get("path", ""))

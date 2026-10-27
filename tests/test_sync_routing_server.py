@@ -168,6 +168,9 @@ class FakeService:
     def preview(self, jid, path):
         return {"path": path}
 
+    def script(self, jid):
+        return {"text": "#!/bin/bash\n"}
+
 
 @pytest.fixture
 def server():
@@ -191,6 +194,7 @@ def test_server_routes(server):
     assert json.loads(body)["jobs"][0]["filters"] == ["finished_6h", "running"]
     assert json.loads(_get(base + "/api/health")[2])["ok"] is True
     assert _get(base + "/api/jobs/1/file?path=a.png&raw=1")[1:] == ("image/png", b"\x89PNG")
+    assert json.loads(_get(base + "/api/jobs/1/script")[2]) == {"text": "#!/bin/bash\n"}
     assert b"<title>remoteexec</title>" in _get(base + "/")[2]
     assert _get(base + "/static/app.js")[1].startswith("text/javascript")
     with pytest.raises(urllib.error.HTTPError) as ei:
