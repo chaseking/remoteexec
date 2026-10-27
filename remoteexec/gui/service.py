@@ -164,6 +164,7 @@ def build_row(job_id, rec, live) -> dict:
         "status": state_str,
         "host": rec.get("cluster_host", DASH),
         "partition": rec.get("partition") or DASH,
+        "gres": rec.get("gres", ""),
         "project_path": rec.get("local_dir") or workdir or DASH,
         "env": rec.get("env") or DASH,
         "started": format_started(live.get("start", ""), rec.get("submitted_at", "")),

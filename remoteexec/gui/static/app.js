@@ -602,6 +602,7 @@ function renderStatusRow() {
   const meta = [];
   meta.push(`#${j.job_id}`, j.host);
   if (present(j.partition)) meta.push(j.partition);
+  if (present(j.gres)) meta.push(`gres ${j.gres}`);
   if (present(j.env)) meta.push(j.env);
   const started = formatStarted(j.started_iso);
   if (started) meta.push(`started ${started}`);
@@ -933,6 +934,7 @@ function renderDetails() {
     ["Command", j.command, true, true],
     ["Host", j.host],
     ["Partition", j.partition],
+    ["GRES", j.gres, true],
     ["Environment", j.env],
     ["Submitted", formatStarted(j.submitted_at)],
     ["Started", formatStarted(j.started_iso)],
@@ -972,6 +974,14 @@ async function loadScript(epoch) {
   if (epoch !== state.epoch) return;
   pre.classList.toggle("muted", !!data.error);
   pre.textContent = data.error ? `(not available: ${data.error})` : data.text;
+  // Jobs submitted before GRES was recorded: read it from the script.
+  const gres = !data.error && !present(state.detail.gres) &&
+    [...data.text.matchAll(/^#SBATCH\s+--gres[= ](\S+)/gm)].map((m) => m[1]).join(",");
+  if (gres) {
+    state.detail.gres = gres;
+    renderDetails();
+    renderStatusRow();
+  }
 }
 
 // ---------- clusters & hosts ----------
