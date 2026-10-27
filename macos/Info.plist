@@ -8,6 +8,8 @@
 	<string>remoteexec</string>
 	<key>CFBundleDisplayName</key>
 	<string>remoteexec</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
 	<string>RemoteExec</string>
 	<key>CFBundlePackageType</key>

@@ -42,6 +42,7 @@ on port 8765 with sample jobs from a fake Slurm; the app picks it up.
 
 ## Icon
 
+The app icon is `AppIcon.icns`, drawn by `make_icon.py` (edit the colours/glyph there and
+run `uv run --with pillow python make_icon.py AppIcon.icns`, or drop in your own `.icns`).
 The menu bar icon is the SF Symbol `terminal` (`terminal.fill` while jobs run): change
-`iconIdle` / `iconBusy` in `Sources/RemoteExecBar/App.swift`. For an app icon, put an
-`AppIcon.icns` next to `build.sh`; it is picked up automatically.
+`iconIdle` / `iconBusy` in `Sources/RemoteExecBar/App.swift`.
