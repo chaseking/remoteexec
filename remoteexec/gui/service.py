@@ -429,6 +429,20 @@ class JobService:
             return 413, "text/plain", b"file too large to serve; use remoteexec fetch"
         return 200, mimetypes.guess_type(path)[0] or "application/octet-stream", body
 
+    def script(self, job_id: str) -> dict:
+        """The sbatch script the job was submitted with."""
+        rec = state.get(job_id)
+        if rec is None or not rec.get("rundir"):
+            return {"error": "no run directory recorded for this job"}
+        try:
+            r = self._cluster(rec["cluster_host"]).conn.run(
+                f"cat {rq(rec['rundir'] + '/run.sbatch')}", check=False, timeout=SSH_TIMEOUT)
+        except Exception as e:
+            return {"error": str(e)}
+        if r.returncode:
+            return {"error": "run.sbatch not found (the run directory may have been cleaned)"}
+        return {"text": r.stdout}
+
     def fetch_outputs(self, job_id: str) -> dict:
         rec = state.get(job_id)
         if rec is None:

@@ -4,8 +4,10 @@ A macOS (13+) menu bar app for remoteexec jobs:
 
 - **Dropdown** — running jobs and jobs that finished in the last 6 hours (name, job id,
   host, elapsed time / how long ago). The menu bar shows how many are running or queued.
-- **Click a job** → a window with the dashboard (same UI as `remoteexec gui`): live log
-  with a *live / complete* indicator, output files with previews and *Download all*.
+- **Click a job** → the jobs window (the same UI as `remoteexec gui`): a sidebar with the
+  same job list plus search and a finished-window filter, and the selected job's live log
+  (with a live / complete indicator), output files with previews and *Download outputs*,
+  and a Details tab (paths, exit code, the submitted sbatch script). ↑/↓ move between jobs.
 - **Host switcher** — the `axon ▾` menu routes a cluster through another ssh alias
   (e.g. `axon-remote` off-site, or *Automatic*); *Manage clusters & ssh hosts…* adds or
   edits them. The CLI and Python API follow the same setting.
@@ -26,6 +28,10 @@ cd macos
 ```
 
 To start it at login: System Settings → General → Login Items → add `remoteexec`.
+`open remoteexec.app --args --open-dashboard` also opens the jobs window at launch.
+
+Working on the UI without a cluster: `python tests/demo_dashboard.py` serves the dashboard
+on port 8765 with sample jobs from a fake Slurm; the app picks it up.
 
 ## Settings
 

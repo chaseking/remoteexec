@@ -86,6 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if settings.notify { Notifier.shared.setup() }
         store.startPolling()
+        if CommandLine.arguments.contains("--open-dashboard") {
+            openDashboard(path: "/")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

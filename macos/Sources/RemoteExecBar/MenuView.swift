@@ -119,10 +119,16 @@ struct MenuView: View {
     }
 }
 
+// Hover/pulse state avoids `@State`: in recent SDKs it is a macro whose compiler plugin
+// ships only with Xcode, so `@State` breaks builds on the Command Line Tools alone.
+final class HoverState: ObservableObject {
+    @Published var on = false
+}
+
 struct JobRowView: View {
     let job: JobRow
     let open: () -> Void
-    @State var hovering = false
+    @StateObject private var hover = HoverState()
 
     var body: some View {
         Button(action: open) {
@@ -148,12 +154,12 @@ struct JobRowView: View {
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(hovering ? Color.primary.opacity(0.08) : Color.clear)
+                    .fill(hover.on ? Color.primary.opacity(0.08) : Color.clear)
             )
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 6)
-        .onHover { hovering = $0 }
+        .onHover { hover.on = $0 }
         .help(job.command ?? job.name)
     }
 
@@ -178,18 +184,24 @@ struct JobRowView: View {
 
 struct StatusIcon: View {
     let phase: JobPhase
-    @State var dim = false
 
     var body: some View {
+        if phase == .running {
+            // pulse between 0.35 and 1 opacity every 1.8s
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                icon.opacity(0.675 + 0.325 * cos(t * 2 * .pi / 1.8))
+            }
+        } else {
+            icon
+        }
+    }
+
+    private var icon: some View {
         Image(systemName: symbol)
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(color)
-            .opacity(phase == .running && dim ? 0.35 : 1)
             .frame(width: 16)
-            .onAppear {
-                guard phase == .running else { return }
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
-            }
     }
 
     private var symbol: String {

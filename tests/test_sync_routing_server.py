@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -98,10 +101,17 @@ def test_routing(rx_home, monkeypatch):
     connection._auto.clear()
 
 
-def test_ssh_argv(rx_home):
-    argv = SSHConnection("axon", port=2222)._ssh_argv("true")
-    assert argv[0] == "ssh" and argv[-2:] == ["axon", "true"]
-    assert "-p" in argv and f"ControlPath={rx_home / 'cm' / 'axon-2222'}" in argv
+def test_ssh_argv(monkeypatch):
+    # a short home: the socket path falls back to a tmpdir hash when it is over ~90 chars
+    # (pytest's macOS tmp_path is), which isn't what this test is about
+    home = Path(tempfile.mkdtemp(prefix="rx", dir="/tmp"))
+    monkeypatch.setenv("REMOTEEXEC_HOME", str(home))
+    try:
+        argv = SSHConnection("axon", port=2222)._ssh_argv("true")
+        assert argv[0] == "ssh" and argv[-2:] == ["axon", "true"]
+        assert "-p" in argv and f"ControlPath={home / 'cm' / 'axon-2222'}" in argv
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
 
 
 # ---- environments / templates ----
@@ -158,6 +168,9 @@ class FakeService:
     def preview(self, jid, path):
         return {"path": path}
 
+    def script(self, jid):
+        return {"text": "#!/bin/bash\n"}
+
 
 @pytest.fixture
 def server():
@@ -181,6 +194,7 @@ def test_server_routes(server):
     assert json.loads(body)["jobs"][0]["filters"] == ["finished_6h", "running"]
     assert json.loads(_get(base + "/api/health")[2])["ok"] is True
     assert _get(base + "/api/jobs/1/file?path=a.png&raw=1")[1:] == ("image/png", b"\x89PNG")
+    assert json.loads(_get(base + "/api/jobs/1/script")[2]) == {"text": "#!/bin/bash\n"}
     assert b"<title>remoteexec</title>" in _get(base + "/")[2]
     assert _get(base + "/static/app.js")[1].startswith("text/javascript")
     with pytest.raises(urllib.error.HTTPError) as ei:

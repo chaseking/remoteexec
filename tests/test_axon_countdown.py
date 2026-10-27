@@ -51,16 +51,21 @@ def axon_reachable() -> bool:
 
 def remote_env_info():
     """(python_minor, cloudpickle_version) of axon's default conda env (`base`)."""
+    from remoteexec.clusters.presets import CONDA_MODULE
+
+    # conda isn't on a bare ssh PATH: load the same module AxonCluster does.
+    probe = (
+        "import sys,cloudpickle;"
+        "print(*sys.version_info[:2],cloudpickle.__version__)"
+    )
     out = _ssh(
-        "python -c "
-        "'import sys,cloudpickle;"
-        'print(f"{sys.version_info.major}.{sys.version_info.minor}",'
-        "cloudpickle.__version__)'"
+        f"bash -lc 'ml load {CONDA_MODULE} && eval \"$(conda shell.bash hook)\" "
+        f"&& conda activate base && python -c \"{probe}\"'"
     ).stdout
-    # the login shell prints a CUDA banner to stderr; the answer is the last line
+    # the login shell may print banners; the answer is the last line
     line = [ln for ln in out.splitlines() if ln.strip()][-1]
-    py, cp = line.split()
-    return py, cp
+    major, minor, cp = line.split()
+    return f"{major}.{minor}", cp
 
 
 def _local_info():

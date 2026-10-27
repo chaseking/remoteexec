@@ -301,7 +301,7 @@ class JobArray:
             return {}
         paths = {j._result_remote.lstrip("/"): j.job_id for j in jobs}
         r = jobs[0].conn.run(
-            "cd / && tar cf - --ignore-failed-read " + " ".join(rq(p) for p in paths)
+            "cd / && tar cf - " + " ".join(rq(p) for p in paths)  # missing files just get skipped
             + " 2>/dev/null", check=False, text=False)
         found = {}
         try:

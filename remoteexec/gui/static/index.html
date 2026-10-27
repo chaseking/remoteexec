@@ -7,137 +7,131 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <!-- ===== Jobs table ===== -->
-  <div id="view-main" class="view">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-dot"></span>
-        <span class="brand-name">remoteexec</span>
-        <span class="brand-sub">jobs</span>
+  <div class="app" id="app">
+    <!-- ===== Sidebar: the job list, styled like the menu bar dropdown ===== -->
+    <aside class="sidebar">
+      <div class="side-top">
+        <div class="brand"><span class="ico" data-icon="terminal"></span><span>remoteexec</span></div>
+        <button id="refresh-btn" class="icon-btn" title="Refresh"><span class="ico" data-icon="refresh"></span></button>
       </div>
-      <div class="topbar-right">
-        <div class="filter">
-          <button id="filter-btn" class="btn">
-            Filter <span id="filter-count" class="chip"></span>
-            <span class="caret">▾</span>
+      <label class="search">
+        <span class="ico" data-icon="search"></span>
+        <input id="search" type="search" placeholder="Search jobs" spellcheck="false" autocomplete="off" />
+      </label>
+      <div id="conn-error" class="side-warning hidden"></div>
+      <div id="job-list" class="job-list"></div>
+      <div class="side-foot">
+        <div class="pop-wrap">
+          <button id="route-btn" class="foot-btn" title="Which ssh alias each cluster connects through">
+            <span class="ico" data-icon="globe"></span><span id="route-label">hosts</span><span class="ico small" data-icon="chevron"></span>
           </button>
-          <div id="filter-menu" class="filter-menu hidden">
-            <label><input type="checkbox" value="running" /> Running</label>
-            <label><input type="checkbox" value="finished_6h" /> Recently finished (6h)</label>
-            <label><input type="checkbox" value="finished_1d" /> Recently finished (1d)</label>
-            <label><input type="checkbox" value="finished_7d" /> Recently finished (7d)</label>
-          </div>
+          <div id="route-menu" class="popmenu up hidden"></div>
         </div>
-        <button id="refresh-btn" class="btn icon" title="Refresh">⟳</button>
-        <button id="settings-btn" class="btn icon" title="Clusters &amp; hosts" aria-label="Clusters and hosts">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
-        </button>
-        <button class="btn icon theme-toggle" title="Toggle light/dark" aria-label="Toggle color scheme">
-          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        </button>
-        <span id="updated" class="updated"></span>
-      </div>
-    </header>
-
-    <div id="conn-error" class="conn-error hidden"></div>
-    <div class="table-wrap">
-      <table id="jobs-table">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Job name</th>
-            <th>Project path</th>
-            <th>Started</th>
-            <th>Running</th>
-            <th>Environment</th>
-            <th>Job ID</th>
-            <th>Host</th>
-            <th>Partition</th>
-          </tr>
-        </thead>
-        <tbody id="jobs-body"></tbody>
-      </table>
-      <div id="empty" class="empty hidden">No jobs match the current filter.</div>
-    </div>
-  </div>
-
-  <!-- ===== Job detail ===== -->
-  <div id="view-detail" class="view hidden">
-    <header class="topbar">
-      <div class="brand">
-        <button id="back-btn" class="btn icon" title="Back to jobs">←</button>
-        <span id="detail-name" class="brand-name"></span>
-        <span id="detail-status" class="pill"></span>
-        <span id="live" class="live"></span>
-      </div>
-      <div class="topbar-right">
-        <button class="btn icon theme-toggle" title="Toggle light/dark" aria-label="Toggle color scheme">
-          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        </button>
-        <div class="menu">
-          <button id="menu-btn" class="btn icon" title="Actions">⋯</button>
-          <div id="menu-list" class="menu-list hidden">
-            <button id="copy-workdir">Copy remote workdir</button>
-            <button id="copy-outdir">Copy remote output dir</button>
-            <button id="copy-logfile">Copy log path</button>
-            <button id="copy-project">Copy local project path</button>
-            <div class="menu-sep"></div>
-            <button id="cancel-job" class="danger">Cancel job</button>
-          </div>
-        </div>
-      </div>
-    </header>
-    <div class="meta" id="detail-meta"></div>
-    <nav class="tabs">
-      <button class="tab active" data-tab="log">Log</button>
-      <button class="tab" data-tab="files">Files <span id="files-count" class="count"></span></button>
-    </nav>
-    <section id="tab-log" class="tab-body">
-      <div id="console-note" class="console-note hidden"></div>
-      <pre id="console" class="console"></pre>
-    </section>
-    <section id="tab-files" class="tab-body hidden">
-      <div class="files-bar">
-        <span id="files-root" class="files-root"></span>
         <span class="spacer"></span>
-        <button id="files-refresh" class="btn icon" title="Refresh file list">⟳</button>
-        <button id="files-fetch" class="btn" title="rsync this job's outputs to your machine">Download all</button>
+        <span id="updated" class="updated"></span>
+        <button id="settings-btn" class="icon-btn" title="Clusters &amp; hosts"><span class="ico" data-icon="gear"></span></button>
+        <button id="theme-btn" class="icon-btn" title="Toggle light/dark"><span class="ico" data-icon="theme"></span></button>
       </div>
-      <div class="files-split">
-        <div id="files-list" class="files-list"></div>
-        <div id="file-view" class="file-view"></div>
-      </div>
-    </section>
-  </div>
+    </aside>
 
-  <!-- ===== Clusters & hosts ===== -->
-  <div id="view-settings" class="view hidden">
-    <header class="topbar">
-      <div class="brand">
-        <button id="settings-back" class="btn icon" title="Back to jobs">←</button>
-        <span class="brand-name">Clusters &amp; hosts</span>
-      </div>
-      <div class="topbar-right"><span id="settings-status" class="updated"></span></div>
-    </header>
-    <div class="settings">
-      <p class="hint">
-        A cluster can be reachable through several ssh aliases from <code>~/.ssh/config</code>
-        (e.g. <code>axon</code> on-site, <code>axon-remote</code> off-site). Pick the one to use;
-        jobs, the CLI and <code>AxonCluster()</code> all follow it. <b>Automatic</b> uses the first alias that answers.
-      </p>
-      <div id="clusters"></div>
-      <div class="card add-card">
-        <div class="card-title">Add a cluster</div>
-        <div class="row">
-          <input id="new-name" placeholder="name (e.g. axon)" spellcheck="false" />
-          <input id="new-aliases" class="grow" placeholder="ssh aliases, space-separated (e.g. axon axon-remote)" spellcheck="false" />
-          <button id="add-cluster" class="btn">Add</button>
+    <main class="main">
+      <!-- ===== Nothing selected ===== -->
+      <section id="view-empty" class="pane empty-pane">
+        <div class="empty-inner">
+          <h1 class="serif" id="empty-title">No jobs yet</h1>
+          <p id="empty-sub" class="muted">Jobs you submit show up here with live logs and output files.</p>
+          <pre class="snippet">remoteexec run -c axon -p ctn -- python train.py</pre>
         </div>
-        <div id="seen" class="hint small"></div>
-      </div>
-    </div>
+      </section>
+
+      <!-- ===== Job detail ===== -->
+      <section id="view-job" class="pane hidden">
+        <header class="job-head">
+          <div class="title-row">
+            <button id="back-btn" class="icon-btn back" title="Back to jobs"><span class="ico" data-icon="back"></span></button>
+            <h1 id="job-title"></h1>
+            <span class="spacer"></span>
+            <button id="download-btn" class="btn" title="rsync this job's output files to your machine">
+              <span class="ico" data-icon="download"></span>Download outputs
+            </button>
+            <button id="cancel-btn" class="btn danger hidden">Cancel job</button>
+            <div class="pop-wrap">
+              <button id="more-btn" class="icon-btn" title="More"><span class="ico" data-icon="more"></span></button>
+              <div id="more-menu" class="popmenu right hidden">
+                <button data-copy="workdir">Copy remote workdir</button>
+                <button data-copy="outdir">Copy remote output dir</button>
+                <button data-copy="logfile">Copy log path</button>
+                <button data-copy="project_path">Copy local project path</button>
+                <button data-copy="job_id">Copy job id</button>
+              </div>
+            </div>
+          </div>
+          <div id="status-row" class="status-row"></div>
+          <nav class="seg" role="tablist">
+            <button class="seg-btn active" data-tab="log">Log</button>
+            <button class="seg-btn" data-tab="files">Files<span id="files-count" class="count"></span></button>
+            <button class="seg-btn" data-tab="details">Details</button>
+          </nav>
+        </header>
+
+        <div id="tab-log" class="tab-body">
+          <div id="console-note" class="note hidden"></div>
+          <pre id="console" class="console"></pre>
+          <button id="jump-btn" class="jump hidden"><span class="ico small" data-icon="down"></span>Latest output</button>
+        </div>
+
+        <div id="tab-files" class="tab-body hidden">
+          <div class="files">
+            <div class="files-side">
+              <div class="files-tools">
+                <span id="files-root" class="files-root"></span>
+                <button id="files-refresh" class="icon-btn" title="Refresh file list"><span class="ico" data-icon="refresh"></span></button>
+              </div>
+              <div id="files-list" class="files-list"></div>
+            </div>
+            <div id="file-view" class="file-view"></div>
+          </div>
+        </div>
+
+        <div id="tab-details" class="tab-body hidden">
+          <div class="details">
+            <dl id="details-grid" class="kv"></dl>
+            <h3 class="sub-head">Submission script</h3>
+            <pre id="script" class="script muted">Loading…</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Clusters & hosts ===== -->
+      <section id="view-settings" class="pane hidden">
+        <header class="job-head">
+          <div class="title-row">
+            <button id="settings-back" class="icon-btn back" title="Back to jobs"><span class="ico" data-icon="back"></span></button>
+            <h1>Clusters &amp; hosts</h1>
+            <span class="spacer"></span>
+            <span id="settings-status" class="updated"></span>
+          </div>
+          <p class="muted lead">
+            A cluster can be reachable through several ssh aliases from <code>~/.ssh/config</code>
+            (e.g. <code>axon</code> on-site, <code>axon-remote</code> off-site). Pick the one to use —
+            jobs, the CLI and <code>AxonCluster()</code> all follow it. <b>Automatic</b> uses the first
+            alias that answers.
+          </p>
+        </header>
+        <div class="settings">
+          <div id="clusters"></div>
+          <div class="group">
+            <div class="group-title">Add a cluster</div>
+            <div class="row">
+              <input id="new-name" placeholder="name (e.g. axon)" spellcheck="false" />
+              <input id="new-aliases" class="grow" placeholder="ssh aliases, space-separated (e.g. axon axon-remote)" spellcheck="false" />
+              <button id="add-cluster" class="btn">Add</button>
+            </div>
+            <div id="seen" class="muted small"></div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
 
   <div id="toast" class="toast"></div>

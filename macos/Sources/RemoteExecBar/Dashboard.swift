@@ -35,18 +35,37 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         webView?.reload()
     }
 
+    /// The page's own background (style.css --bg), shown while it loads.
+    static let pageBackground = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x26 / 255, green: 0x26 / 255, blue: 0x24 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xFA / 255, green: 0xF9 / 255, blue: 0xF5 / 255, alpha: 1)
+    }
+
     private func build() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // keeps the web UI's theme choice
+        // Tells the page it runs under a transparent titlebar, so it keeps the
+        // strip behind the traffic lights free of controls.
+        config.userContentController.addUserScript(WKUserScript(
+            source: "window.remoteexecApp = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: config)
         web.uiDelegate = self
         web.navigationDelegate = self
+        if web.responds(to: NSSelectorFromString("_setDrawsBackground:")) {
+            web.setValue(false, forKey: "drawsBackground")  // no white flash before the page paints
+        }
+        // Content runs edge to edge under the titlebar, like the Claude app:
+        // one surface, with the traffic lights over the sidebar.
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
         w.title = "remoteexec"
+        w.titleVisibility = .hidden
+        w.titlebarAppearsTransparent = true
+        w.backgroundColor = Self.pageBackground
         w.contentView = web
-        w.minSize = NSSize(width: 720, height: 420)
+        w.minSize = NSSize(width: 760, height: 460)
         w.isReleasedWhenClosed = false
         w.delegate = self
         w.center()
@@ -62,9 +81,11 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         let retry = backend.url(currentPath).absoluteString
         let html = """
         <html><head><meta http-equiv="refresh" content="5;url=\(retry)">
-        <style>body{font:13px -apple-system;padding:32px;color:#555}
-        pre{white-space:pre-wrap;font-size:12px;background:#f3f1ee;padding:12px;border-radius:8px}
-        @media (prefers-color-scheme: dark){body{background:#1f1e1d;color:#bbb}pre{background:#2a2928}}</style></head>
+        <style>body{font:13px -apple-system;padding:56px 40px;color:#6b6963;background:#faf9f5}
+        h3{color:#1f1e1d;font-weight:600}
+        pre{white-space:pre-wrap;font-size:12px;background:#f3f1ea;padding:12px;border-radius:8px}
+        @media (prefers-color-scheme: dark){body{background:#262624;color:#a8a59d}h3{color:#f0eee8}
+        pre{background:#1f1e1d}}</style></head>
         <body><h3>Can't reach the remoteexec backend</h3><pre>\(escaped)</pre>
         <p>Retrying in a few seconds. Check the command in the app's Settings.</p></body></html>
         """

@@ -5,8 +5,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/RemoteExecBar"
+# SwiftPM's default build system fails to initialise on some Command Line Tools-only
+# setups ("Unknown error parsing property list"); fall back to the native one.
+BS=()
+swift build -c release || { BS=(--build-system native); swift build -c release "${BS[@]}"; }
+BIN="$(swift build -c release ${BS[@]+"${BS[@]}"} --show-bin-path)/RemoteExecBar"
 APP="build/remoteexec.app"
 
 rm -rf "$APP"

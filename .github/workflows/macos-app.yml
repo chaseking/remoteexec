@@ -1,27 +1,36 @@
 name: macos-app
 on:
   push:
-    paths: ["macos/**", "remoteexec/gui/**", ".github/workflows/macos-app.yml"]
+    paths: ["macos/**", "remoteexec/gui/**", "tests/demo_dashboard.py", ".github/workflows/macos-app.yml"]
   pull_request:
     paths: ["macos/**"]
   workflow_dispatch:
 
 jobs:
   build:
+    name: build (${{ matrix.os }}${{ matrix.clt && ', CLT only' || '' }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15]
+        include:
+          - os: macos-14
+          - os: macos-15
+          # Command Line Tools without Xcode: SwiftUI macros like @State aren't available
+          - os: macos-15
+            clt: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Use the Command Line Tools
+        if: matrix.clt
+        run: sudo xcode-select -s /Library/Developer/CommandLineTools
       - run: swift --version
       - name: Build the app bundle
         working-directory: macos
         run: ./build.sh
       - name: Launch it and check it starts the backend
         run: |
-          python3 -m venv /tmp/rx && /tmp/rx/bin/pip install -q .
+          python3 -m venv /tmp/rx && /tmp/rx/bin/pip install -q . pytest
           defaults write io.github.chaseking.remoteexec.menubar backendCommand /tmp/rx/bin/remoteexec
           defaults write io.github.chaseking.remoteexec.menubar notify -bool false
           open macos/build/remoteexec.app
@@ -36,3 +45,18 @@ jobs:
           sleep 3
           # the backend exits with the app (--parent-pid)
           ! curl -sf http://127.0.0.1:8765/api/health
+      - name: Open the dashboard window on demo jobs
+        run: |
+          /tmp/rx/bin/python tests/demo_dashboard.py --port 8765 --dir /tmp/rx-demo > /tmp/demo.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/api/health && break; sleep 1; done
+          open macos/build/remoteexec.app --args --open-dashboard
+          sleep 12
+          pgrep -x RemoteExec   # still alive with the window open
+      - name: Screenshot
+        continue-on-error: true
+        run: screencapture -x /tmp/dashboard.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-${{ matrix.os }}${{ matrix.clt && '-clt' || '' }}
+          path: /tmp/dashboard.png
+          if-no-files-found: ignore
