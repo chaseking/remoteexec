@@ -11,7 +11,7 @@ SBATCH_TEMPLATE = """#!/bin/bash
 #SBATCH --output={logdir}/%j.out
 
 set -euo pipefail
-echo "[remoteexec] host=$(hostname) job=${{SLURM_JOB_ID}} start=$(date -Is)"
+echo "[remoteexec] host=$(hostname) job=${{SLURM_JOB_ID}} start=$(date +%Y-%m-%dT%H:%M:%S%z)"
 
 {setup}
 {env_activation}
@@ -24,7 +24,7 @@ mkdir -p "$REMOTEEXEC_OUTPUT_DIR"
 
 rc=0
 {run_line}
-echo "[remoteexec] end=$(date -Is) rc=${{rc}}"
+echo "[remoteexec] end=$(date +%Y-%m-%dT%H:%M:%S%z) rc=${{rc}}"
 exit ${{rc}}
 """
 

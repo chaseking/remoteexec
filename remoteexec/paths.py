@@ -26,10 +26,14 @@ def rq(path: str) -> str:
 
 def list_files(conn, root: str, *, limit: int = 5000, timeout=None) -> list[dict] | None:
     """Files under ``root`` as ``[{"path", "size", "mtime"}]`` sorted by path,
-    or None if ``root`` doesn't exist. One round trip (GNU find)."""
+    or None if ``root`` doesn't exist. One round trip (GNU find, else BSD stat)."""
     out = conn.run(
         f"cd {rq(root)} 2>/dev/null || {{ echo NOPE; exit 0; }}; "
-        f"find . -type f -printf '%s\\t%T@\\t%P\\n' 2>/dev/null | head -n {int(limit)}",
+        f"{{ if find . -maxdepth 0 -printf '' 2>/dev/null; then "
+        f"find . -type f -printf '%s\\t%T@\\t%P\\n' 2>/dev/null; "
+        f"else t=$(printf '\\t'); "  # BSD stat doesn't expand \t itself
+        f"find . -type f -exec stat -f \"%z$t%m$t%N\" {{}} + 2>/dev/null; fi; }} "
+        f"| head -n {int(limit)}",
         check=False, timeout=timeout,
     ).stdout
     if out.startswith("NOPE"):
@@ -38,8 +42,8 @@ def list_files(conn, root: str, *, limit: int = 5000, timeout=None) -> list[dict
     for line in out.splitlines():
         parts = line.split("\t", 2)
         if len(parts) == 3:
-            files.append({"path": parts[2], "size": int(parts[0]),
-                          "mtime": float(parts[1])})
+            path = parts[2][2:] if parts[2].startswith("./") else parts[2]  # BSD %N keeps "./"
+            files.append({"path": path, "size": int(parts[0]), "mtime": float(parts[1])})
     return sorted(files, key=lambda f: f["path"])
 
 

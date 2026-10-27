@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -98,10 +101,17 @@ def test_routing(rx_home, monkeypatch):
     connection._auto.clear()
 
 
-def test_ssh_argv(rx_home):
-    argv = SSHConnection("axon", port=2222)._ssh_argv("true")
-    assert argv[0] == "ssh" and argv[-2:] == ["axon", "true"]
-    assert "-p" in argv and f"ControlPath={rx_home / 'cm' / 'axon-2222'}" in argv
+def test_ssh_argv(monkeypatch):
+    # a short home: the socket path falls back to a tmpdir hash when it is over ~90 chars
+    # (pytest's macOS tmp_path is), which isn't what this test is about
+    home = Path(tempfile.mkdtemp(prefix="rx", dir="/tmp"))
+    monkeypatch.setenv("REMOTEEXEC_HOME", str(home))
+    try:
+        argv = SSHConnection("axon", port=2222)._ssh_argv("true")
+        assert argv[0] == "ssh" and argv[-2:] == ["axon", "true"]
+        assert "-p" in argv and f"ControlPath={home / 'cm' / 'axon-2222'}" in argv
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
 
 
 # ---- environments / templates ----
