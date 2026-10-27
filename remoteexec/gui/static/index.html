@@ -31,7 +31,7 @@
         </div>
         <span class="spacer"></span>
         <span id="updated" class="updated"></span>
-        <button id="settings-btn" class="icon-btn" title="Clusters &amp; hosts"><span class="ico" data-icon="gear"></span></button>
+        <button id="settings-btn" class="icon-btn" title="Settings"><span class="ico" data-icon="gear"></span></button>
         <button id="theme-btn" class="icon-btn" title="Toggle light/dark"><span class="ico" data-icon="theme"></span></button>
       </div>
     </aside>
@@ -109,18 +109,19 @@
         <header class="job-head">
           <div class="title-row">
             <button id="settings-back" class="icon-btn back" title="Back to jobs"><span class="ico" data-icon="back"></span></button>
-            <h1>Clusters &amp; hosts</h1>
+            <h1>Settings</h1>
             <span class="spacer"></span>
             <span id="settings-status" class="updated"></span>
           </div>
+        </header>
+        <div class="settings">
+          <h2 class="settings-head">Clusters &amp; hosts</h2>
           <p class="muted lead">
             A cluster can be reachable through several ssh aliases from <code>~/.ssh/config</code>
             (e.g. <code>axon</code> on-site, <code>axon-remote</code> off-site). Pick the one to use —
             jobs, the CLI and <code>AxonCluster()</code> all follow it. <b>Automatic</b> uses the first
             alias that answers.
           </p>
-        </header>
-        <div class="settings">
           <div id="clusters"></div>
           <div class="group">
             <div class="group-title">Add a cluster</div>
@@ -130,6 +131,27 @@
               <button id="add-cluster" class="btn">Add</button>
             </div>
             <div id="seen" class="muted small"></div>
+          </div>
+
+          <!-- shown inside the macOS app only -->
+          <div id="app-settings" class="hidden">
+            <h2 class="settings-head">Menu bar app</h2>
+            <div class="group">
+              <label class="row-line toggle"><input type="checkbox" id="app-notify" /> Notify when a job finishes</label>
+              <div class="row-line">
+                <span class="label">CLI command</span>
+                <input id="app-command" class="grow" spellcheck="false" />
+              </div>
+              <div class="row-line">
+                <span class="label">Port</span>
+                <input id="app-port" inputmode="numeric" style="width: 90px" />
+                <button id="app-restart" class="btn">Restart backend</button>
+              </div>
+              <p class="muted small">
+                How the app starts <code>remoteexec gui</code> in the background. Leave the command empty
+                to find it automatically. <span id="app-log"></span>
+              </p>
+            </div>
           </div>
         </div>
       </section>

@@ -4,9 +4,12 @@ import WebKit
 /// The dashboard window: the `remoteexec gui` web UI (jobs, live logs, output
 /// files, cluster/host settings) in a native window.
 @MainActor
-final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
+final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate,
+                                 WKScriptMessageHandler {
     let backend: Backend
     var onClose: (() -> Void)?
+    /// Opens the native backend settings (for when the page can't load).
+    var onOpenBackendSettings: (() -> Void)?
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var currentPath = "/"
@@ -65,6 +68,8 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         config.userContentController.addUserScript(WKUserScript(
             source: "window.remoteexecApp = {topInset: \(Int(titlebar))};",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // The Settings page reads and changes the app's own settings through this.
+        config.userContentController.add(self, name: "remoteexec")
         let web = WKWebView(frame: .zero, configuration: config)
         web.uiDelegate = self
         web.navigationDelegate = self
@@ -105,9 +110,52 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         @media (prefers-color-scheme: dark){body{background:#262624;color:#a8a59d}h3{color:#f0eee8}
         pre{background:#1f1e1d}}</style></head>
         <body><h3>Can't reach the remoteexec backend</h3><pre>\(escaped)</pre>
-        <p>Retrying in a few seconds. Check the command in the app's Settings.</p></body></html>
+        <p>Retrying in a few seconds.
+        <a href="#" onclick="webkit.messageHandlers.remoteexec.postMessage({type:'backendSettings'});return false">Backend settings…</a></p>
+        </body></html>
         """
         webView?.loadHTMLString(html, baseURL: nil)
+    }
+
+    // MARK: messages from the page (Settings → Menu bar app)
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        let settings = backend.settings
+        switch type {
+        case "setAppSettings":
+            if let notify = body["notify"] as? Bool {
+                settings.notify = notify
+                if notify { Notifier.shared.setup() }
+            }
+            if let command = body["backendCommand"] as? String { settings.backendCommand = command }
+            if let port = body["port"] as? Int, port > 0 { settings.port = port }
+        case "restartBackend":
+            Task {
+                await backend.restart()
+                webView?.load(URLRequest(url: backend.url("/?view=settings")))  // the port may have changed
+            }
+            return
+        case "backendSettings":
+            onOpenBackendSettings?()
+            return
+        default:
+            break
+        }
+        sendAppSettings()
+    }
+
+    private func sendAppSettings() {
+        let s = backend.settings
+        let payload: [String: Any] = [
+            "notify": s.notify, "backendCommand": s.backendCommand, "port": s.port,
+            "detected": Backend.detectCommand() ?? "", "log": backend.logURL.path,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("window.remoteexecAppSettings && window.remoteexecAppSettings(\(json))",
+                                    completionHandler: nil)
     }
 
     // MARK: NSWindowDelegate

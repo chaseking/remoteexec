@@ -1154,6 +1154,33 @@ function addCluster() {
   saveHosts(c);
 }
 
+// ---------- menu bar app settings (inside the macOS app only) ----------
+function initAppSettings() {
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.remoteexec;
+  if (!window.remoteexecApp || !bridge) return;
+  const send = (msg) => bridge.postMessage(msg);
+  $("#app-settings").classList.remove("hidden");
+  // The app calls this with its current settings after every change.
+  window.remoteexecAppSettings = (s) => {
+    $("#app-notify").checked = !!s.notify;
+    if (document.activeElement !== $("#app-command")) $("#app-command").value = s.backendCommand || "";
+    $("#app-command").placeholder = s.detected ? `auto: ${s.detected}` : "auto-detect";
+    if (document.activeElement !== $("#app-port")) $("#app-port").value = s.port;
+    $("#app-log").textContent = s.log ? `Its output goes to ${s.log}.` : "";
+  };
+  $("#app-notify").addEventListener("change", (e) => send({ type: "setAppSettings", notify: e.target.checked }));
+  $("#app-command").addEventListener("change", (e) => send({ type: "setAppSettings", backendCommand: e.target.value.trim() }));
+  $("#app-port").addEventListener("change", (e) => {
+    const port = parseInt(e.target.value, 10);
+    if (port > 0 && port < 65536) send({ type: "setAppSettings", port });
+  });
+  $("#app-restart").addEventListener("click", () => {
+    toast("Restarting the backend…", 4000);
+    send({ type: "restartBackend" });
+  });
+  send({ type: "getAppSettings" });
+}
+
 // ---------- polling control ----------
 async function listLoop() {
   state.listTimer = null;
@@ -1271,6 +1298,7 @@ function init() {
     }
   });
 
+  initAppSettings();
   loadHosts();
   openFromUrl().then(startListPolling);
 }

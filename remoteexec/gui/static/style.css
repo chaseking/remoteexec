@@ -327,13 +327,18 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
 /* ===== Settings ===== */
 .settings { overflow: auto; padding: 4px 24px 28px; border-top: 1px solid var(--line); margin-top: 14px; }
 .group { max-width: 760px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.settings-head { margin: 22px 0 0; font-size: 15px; font-weight: 600; }
+.settings-head + .lead { margin-top: 6px; }
+.row-line.toggle { gap: 8px; margin-top: 0; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }
+.group .small { margin: 10px 0 0; line-height: 1.5; }
 .group-title { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
 .group .row-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .group .label { width: 84px; color: var(--text-2); font-size: 12.5px; }
 .group .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; padding: 0; cursor: default; }
 .group .row:hover { background: none; }
 .grow { flex: 1 1 240px; }
-.settings input, .settings select {
+.settings input:not([type="checkbox"]), .settings select {
   height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line-strong);
   background: var(--raised); color: var(--text); font: 12.5px var(--mono);
 }

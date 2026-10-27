@@ -35,9 +35,10 @@ on port 8765 with sample jobs from a fake Slurm; the app picks it up.
 
 ## Settings
 
-*Settings…* in the dropdown: the command used to launch the CLI (empty = auto-detect
-`~/.local/bin`, Homebrew and conda locations, then your login shell's `PATH`; or e.g.
-`~/miniconda3/bin/remoteexec`), the port, and notifications. Backend output goes to
+*Settings…* in the dropdown (or ⌘,) opens the Settings page of the jobs window: **Clusters &
+hosts** (ssh aliases per cluster) and **Menu bar app** — notifications, the command used to
+start the CLI (empty = find it automatically), and the port. If the backend can't start at
+all, the dropdown offers a small *Backend settings* window instead. Backend output goes to
 `~/Library/Logs/remoteexec-menubar.log`.
 
 ## Icon

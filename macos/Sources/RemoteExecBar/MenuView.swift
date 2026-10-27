@@ -5,6 +5,7 @@ struct MenuActions {
     var openDashboard: () -> Void
     var openHosts: () -> Void
     var openSettings: () -> Void
+    var openBackendSettings: () -> Void
     var quit: () -> Void
 }
 
@@ -51,7 +52,7 @@ struct MenuView: View {
                     await backend.restart()
                     await store.refresh()
                 }
-            }, openSettings: actions.openSettings)
+            }, openSettings: actions.openBackendSettings)
         } else if store.lastUpdate == nil {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
