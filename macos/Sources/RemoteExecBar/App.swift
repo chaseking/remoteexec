@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popoverCloseObserver = NotificationCenter.default.addObserver(
             forName: NSPopover.didCloseNotification, object: popover, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.store.fast = false }
+            Task { @MainActor [weak self] in self?.store.fast = false }
         }
 
         dashboard.onClose = { [weak self] in self?.refreshActivationPolicy() }
@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .store(in: &subscriptions)
 
         Notifier.shared.onOpenJob = { [weak self] id in
-            Task { @MainActor in self?.openDashboard(path: "/?job=\(id)") }
+            Task { @MainActor [weak self] in self?.openDashboard(path: "/?job=\(id)") }
         }
         if settings.notify { Notifier.shared.setup() }
         store.startPolling()
