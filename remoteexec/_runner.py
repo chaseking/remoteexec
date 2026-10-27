@@ -1,7 +1,8 @@
-"""Remote-side entrypoint — §12. Stdlib + cloudpickle only.
+"""Job entrypoint. Stdlib + cloudpickle only.
 
-Copied into each session dir and invoked by absolute path, so the cluster needs
-no ``remoteexec`` install. Reused for local subprocess runs too.
+Shipped into each run dir and invoked by absolute path, so the cluster needs
+no ``remoteexec`` install; a copy of the package rides along in ``lib/`` for
+functions that reference it. Reused for local subprocess runs too.
 """
 import os
 import pickle
@@ -37,6 +38,8 @@ def _version_warning(payload):
 def main():
     import cloudpickle
 
+    # Fallback only: appended, so an installed or synced remoteexec wins.
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
     payload_path, result_path = sys.argv[1], sys.argv[2]
     with open(payload_path, "rb") as fh:
         outer = pickle.load(fh)
@@ -53,6 +56,7 @@ def main():
             "traceback": traceback.format_exc(),
             "exception": _safe(e),
         }
+    os.makedirs(os.path.dirname(os.path.abspath(result_path)), exist_ok=True)
     tmp = result_path + ".tmp"
     with open(tmp, "wb") as fh:
         cloudpickle.dump(out, fh)

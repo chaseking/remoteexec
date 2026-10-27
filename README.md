@@ -1,114 +1,175 @@
 # remoteexec
 
-Edit code locally, execute it on a remote Slurm cluster. Implements
-[`SPEC_IMPL.md`](SPEC_IMPL.md) — a conda-first, ssh/rsync transport over Slurm,
-with a batteries-included `AxonCluster` preset.
+Edit code locally, run it on a Slurm cluster. Your project is rsynced to the
+cluster (only when it changed), jobs are submitted with `sbatch` over your
+existing `ssh` config, and logs, results and output files come back through one
+API, a CLI, a web dashboard and a macOS menu bar app. The cluster needs nothing
+installed but `cloudpickle` — and not even that for shell commands.
+
+```bash
+pip install -e .                    # or: uv tool install -e .   (stdlib only + cloudpickle)
+remoteexec skill --install          # teach Claude Code agents to use it (~/.claude/skills)
+```
+
+## Quick start
+
+**A shell command** — nothing to write:
+
+```bash
+remoteexec run -c axon -p ctn -t 01:00:00 -- python train.py --lr 3e-4   # prints the job id
+remoteexec wait last --timeout 300   # state + log tail + output files (exit 0/1/2 = ok/failed/running)
+```
+
+**A Python function**:
 
 ```python
-from remoteexec import is_remote
-from remoteexec.clusters.presets import AxonCluster
+from remoteexec import AxonCluster, is_remote, output_dir
 
-cluster = AxonCluster()                       # ssh alias `axon`, default conda env `base`
+cluster = AxonCluster()                       # ssh alias `axon`, conda env `base`
 
-@cluster.function(partition="ctn", time="00:05:00", mem="1G", name="countdown")
+@cluster.function(partition="ctn", time="00:05:00", mem="1G")
 def countdown(seconds=10):
     import time
     for i in range(seconds, 0, -1):
-        print(f"  {i}...", flush=True)
+        print(f"  {i}...")
         time.sleep(1)
+    (output_dir() / "done.txt").write_text("liftoff")
     return {"counted": seconds, "where": "cluster" if is_remote() else "local"}
 
-job = countdown(seconds=10)   # syncs repo, submits via sbatch, returns a Job
-job.stream()                  # live-tail the combined log until the job ends
-print(job.result())           # -> {'counted': 10, 'where': 'cluster'}
+job = countdown(seconds=10)   # syncs, submits, returns a Job immediately
+job.stream()                  # live log until the job ends
+job.result()                  # {'counted': 10, 'where': 'cluster'}; re-raises remote exceptions
+job.outputs()                 # {'done.txt': 7}
+job.fetch_outputs()           # -> ./remoteexec-out/countdown-<id>/
 ```
 
-## GUI
+`countdown.local(3)` runs it here first; `REMOTEEXEC_LOCAL=1 python script.py` runs
+every decorated function locally. `countdown.map([5, 10, 20])` submits one Slurm
+array (`arr.results()` fetches all results in one round trip). `cluster.run("python
+train.py", partition="ctn")` is the Python form of `remoteexec run`.
 
-A local web GUI monitors your jobs in a Claude-Code-style dark dashboard:
+## Output files
+
+Every job gets a private output directory: `remoteexec.output_dir()` in Python,
+`$REMOTEEXEC_OUTPUT_DIR` in shell (array tasks get one each). Write results there and
+they never collide with other runs, and you can find them without knowing paths:
+
+| | Python | CLI |
+|---|---|---|
+| list | `job.outputs()` | `remoteexec outputs <id\|last>` |
+| read one | `job.read_output("metrics.json")` | `remoteexec cat <id> metrics.json` |
+| download | `job.fetch_outputs()` → `./remoteexec-out/<name>-<id>/` | `remoteexec fetch <id>` |
+
+The dashboard shows the same tree with text/image previews. (Relative paths still
+write into the shared workspace as before; `job.fetch("path")` fetches those.)
+
+## Monitoring
 
 ```bash
-pip install 'remoteexec[gui]'      # fastapi + uvicorn
-remoteexec gui                     # serves http://127.0.0.1:8765 and opens a browser
-# options: --port 8765  --host 127.0.0.1  --no-browser
+remoteexec ls                 # recent jobs submitted from this directory (-a: all)
+remoteexec logs last -n 50    # log tail (-f to stream)
+remoteexec result <id>        # a function job's return value
+remoteexec cancel <id>
+remoteexec gui                # web dashboard on http://127.0.0.1:8765
 ```
 
-- **Jobs table** — status pill, job name, project path, started date, running
-  time (`[HH:]MM:SS`), environment, job id, host, partition. A filter dropdown
-  (checkbox multi-select) toggles **Running** and **Recently finished
-  (6h / 1d / 7d)**; the table refreshes every ~3s via one batched `sacct`/`squeue`
-  call per host.
-- **Click a row** → a live, scrolling console of the job's combined log (polls
-  every ~3s, sticks to the bottom unless you scroll up). An actions menu (`⋯`)
-  offers **Cancel job** and **Copy paths** (remote workdir / log / local project).
+`last` means the newest job submitted from the current directory tree. Jobs are
+recorded in `~/.remoteexec/manifest.json`, so `cluster.job(id)` reattaches after a
+restart; `remoteexec clean --older-than 30 [--remote] -y` prunes old ones.
 
-The server binds `127.0.0.1` only and reuses your existing ssh ControlMaster —
-auth stays delegated to `~/.ssh/config`, nothing is exposed.
+## How code gets to the cluster
 
-## Running the axon countdown test
+```
+~/remoteexec/<project>/                 mirror of your project root, updated incrementally
+~/remoteexec/<project>/.rx/<session>/   one per submission: run.sbatch, payload, logs/, out/
+```
 
-`tests/test_axon_countdown.py` submits a real 10-second countdown to the `axon`
-cluster, streams its log, and verifies the returned result. Just run it:
+A submission is a single ssh round trip (a small tarball piped into `tar x && sbatch`)
+plus an rsync only when the local tree changed — a loop of 100 submissions syncs
+once. The job runs from the mirrored project root with it on `PYTHONPATH`.
+
+`sync=` (on the cluster, per function, or `--sync` on the CLI) chooses what is synced:
+`True` (whole project, default), `False`, a list of root-relative paths, or **`"cwd"`**:
+only the project's top-level files plus your current directory, and the job runs from
+the mirror of that directory. That is the mode for several agents working in
+`parent/dir1`, `parent/dir2`, … against shared `parent/*.py`: they share one remote
+copy of `parent`, the shared files are only re-sent when they change, and nobody
+touches anyone else's directory.
+
+The remote workspace is shared and updated on each submit, so a job that is still
+queued when you edit and resubmit runs the edited code.
+
+## Switching ssh hosts
+
+One cluster, several ssh aliases (`axon` on-site, `axon-remote` off-site):
 
 ```bash
-pytest tests/test_axon_countdown.py -s     # the -s matters — see below
-# or
-python tests/test_axon_countdown.py
+remoteexec host use axon axon-remote   # route `axon` through axon-remote
+remoteexec host use axon auto          # or: first alias that answers
+remoteexec host test axon              # check each alias
 ```
 
-The test auto-skips if `axon` is unreachable.
+Everything follows the route — `AxonCluster()`, the CLI, the dashboard and the menu bar
+app — and jobs stay listed under `axon` whichever alias submitted them. The dashboard's
+*Clusters & hosts* page edits the same settings (`~/.remoteexec/hosts.json`).
 
-**Pass `-s` to see the live output.** Without `-s` (a.k.a. `--capture=no`),
-pytest captures all stdout and only shows it if the test *fails* — so a passing
-run looks silent (no "submitted job…", no live log). `-s` lets the submit line
-and streamed log through as they happen.
+## Configuration
 
-**About "live" streaming on axon.** `job.stream()` re-reads the log from a byte
-offset each poll, which is robust over axon's NFS (a long-lived `tail -f` on the
-login node silently *drops* the bytes the compute node appends). But the compute
-node only flushes its stdout to the shared filesystem on periodic write-back, so
-a short job like this 10s countdown tends to show its body all at once near the
-end rather than ticking one line per second. Longer jobs stream in with bounded
-lag. No output is lost either way.
+Optional `remoteexec.toml` at the project root (or `~/.config/remoteexec/config.toml`):
 
-**Environment parity (§26), handled automatically.** Functions are shipped by
-value with `cloudpickle`, so the local interpreter must produce pickles the
-remote env can read — matching **Python minor version and cloudpickle major
-version**. Axon's default conda env (`base`) is currently Python 3.11 +
-cloudpickle 2.2.1. If your local interpreter differs (e.g. Python 3.12 +
-cloudpickle 3.x), the test probes the remote env and transparently
-re-executes itself under a matching `uv`-provided interpreter, so the plain
-commands above just work. `uv` must be on `PATH` for this bootstrap; if it
-isn't and the local interpreter is incompatible, the test skips with an
-explanation.
+```toml
+default = "axon"                 # lets you drop `-c axon`
 
-### Automatic parity warning
-
-The library itself warns when the local and remote environments diverge. On the
-first submission, `SlurmCluster` activates the remote env exactly as the job
-will, asks its Python for its version and `cloudpickle.__version__`, and emits an
-`EnvParityWarning` if the Python minor or cloudpickle major version differs (or
-if `cloudpickle` is missing remotely):
-
-```
-EnvParityWarning: remoteexec: local/remote environment mismatch —
-Python 3.12 (local) vs 3.11 (remote). Functions are shipped by value with
-cloudpickle, so this can cause unpickling errors on the cluster. ...
+[clusters.axon]
+preset = "axon"                  # start from AxonCluster
+sync = "cwd"
+setup = ["export WANDB_MODE=offline"]
+[clusters.axon.env]
+kind = "conda"                   # conda | uv | venv | module | apptainer | raw
+name = "torch24"
+init = true
+[clusters.axon.default_resources]
+partition = "ctn"
+time = "04:00:00"
 ```
 
-The check runs once per cluster and never blocks submission. Disable it with
-`SlurmCluster(..., check_env=False)` (also accepted by `AxonCluster`).
+`SlurmCluster.from_config("axon")` or `remoteexec.resolve_cluster("axon")` loads it;
+`remoteexec run -c NAME` accepts a config name, a preset (`axon`, `axon-jax-gpu`) or any
+ssh host. `REMOTEEXEC_HOME` moves `~/.remoteexec`.
 
-### Notes specific to axon
+## Environment parity
 
-- **No default partition** — jobs must set one. The test uses `partition="ctn"`
-  (the account available to this user). The *conda env* is left at the default.
-- **Conda activation in batch shells** — axon's non-interactive `sbatch` shells
-  don't define the `conda` shell function, so `AxonCluster` enables the
-  `eval "$(conda shell.bash hook)"` init step by default (§10.2).
+Function jobs ship code by value with cloudpickle, so local and remote need the same
+Python minor and cloudpickle major version (axon's `base`: Python 3.11, cloudpickle 2.2).
+The first submission checks this (cached for a few days) and emits an
+`EnvParityWarning` on a mismatch. Shell-command jobs pickle nothing and don't care.
 
-## Offline unit tests
+## Notes for axon
+
+- No default partition: pass one (`partition="ctn"` / `-p ctn`).
+- `AxonCluster` evals `conda shell.bash hook` before `conda activate` (batch shells
+  need it).
+- Output reaches the shared filesystem on NFS write-back, so short jobs may show their
+  log all at once at the end. Python output is unbuffered, so nothing is held back.
+
+## Tests
 
 ```bash
-uv run --python 3.11 --with pytest --with . pytest tests/test_unit.py -q
+uv run --python 3.11 --with pytest --with cloudpickle python -m pytest tests/ -q
+pytest tests/test_axon_countdown.py -s     # real axon; skips if unreachable
 ```
+
+The offline suite runs the real submission path end to end against a fake Slurm
+(`tests/fakeslurm.py`) with ssh/rsync replaced by a local shell.
+
+## Changes in 0.3
+
+New: `remoteexec run` / `cluster.run` for shell commands; per-job `output_dir()` with
+`outputs()`/`read_output()`/`fetch_outputs()`; `sync="cwd"` and sync skipping;
+host routing; `wait`/`ls`/`outputs`/`cat`/`clean`/`host`/`skill` commands; dashboard
+file browser and host settings; bare `@cluster.function`; `JobArray` batching.
+Fixed: a function that raised now surfaces as `RemoteExecutionError` (was `JobFailed`);
+`OUT_OF_MEMORY`/`NODE_FAIL` end `wait()` instead of hanging; functions referencing
+`remoteexec` work on clusters without it installed (a copy ships with each job); Python
+output is unbuffered so logs stream live. The CLI and GUI no longer need typer, rich,
+FastAPI or uvicorn. Existing code and manifests keep working.

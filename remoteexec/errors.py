@@ -1,4 +1,4 @@
-"""Exception hierarchy — §21."""
+"""Exception hierarchy."""
 from __future__ import annotations
 
 
@@ -8,7 +8,7 @@ class RemoteExecError(Exception):
 
 class EnvParityWarning(UserWarning):
     """The local Python/cloudpickle versions differ from the remote env in a way
-    that can break by-value (un)pickling of functions and results (§26)."""
+    that can break by-value (un)pickling of functions and results."""
 
 
 class ConnectionError(RemoteExecError):
@@ -42,7 +42,17 @@ class JobFailed(RemoteExecError):
     def __init__(self, state, log_tail: str = ""):
         self.state = state
         self.log_tail = log_tail
-        super().__init__(f"job ended in state {state}\n--- log tail ---\n{log_tail}")
+        st = getattr(state, "value", state)
+        super().__init__(f"job ended in state {st}\n--- log tail ---\n{log_tail}")
+
+
+class JobTimeout(JobFailed, TimeoutError):
+    """``wait``/``result`` gave up before the job finished (it keeps running)."""
+
+    def __init__(self, state, timeout):
+        RemoteExecError.__init__(self, f"job still {getattr(state, 'value', state)} after {timeout}s")
+        self.state = state
+        self.log_tail = ""
 
 
 class RemoteExecutionError(RemoteExecError):

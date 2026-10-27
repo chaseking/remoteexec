@@ -1,4 +1,4 @@
-"""Remote-path handle + quoting helpers — §8."""
+"""Remote paths: shell quoting, a path handle, and directory listing."""
 from __future__ import annotations
 
 import re
@@ -24,6 +24,35 @@ def rq(path: str) -> str:
     return f'"{escaped}"'
 
 
+def list_files(conn, root: str, *, limit: int = 5000, timeout=None) -> list[dict] | None:
+    """Files under ``root`` as ``[{"path", "size", "mtime"}]`` sorted by path,
+    or None if ``root`` doesn't exist. One round trip (GNU find)."""
+    out = conn.run(
+        f"cd {rq(root)} 2>/dev/null || {{ echo NOPE; exit 0; }}; "
+        f"find . -type f -printf '%s\\t%T@\\t%P\\n' 2>/dev/null | head -n {int(limit)}",
+        check=False, timeout=timeout,
+    ).stdout
+    if out.startswith("NOPE"):
+        return None
+    files = []
+    for line in out.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) == 3:
+            files.append({"path": parts[2], "size": int(parts[0]),
+                          "mtime": float(parts[1])})
+    return sorted(files, key=lambda f: f["path"])
+
+
+def safe_relpath(p: str) -> str:
+    """Reject absolute paths and ``..`` so a caller can't escape a directory."""
+    p = (p or "").strip()
+    while p.startswith("./"):
+        p = p[2:]
+    if not p or p.startswith("/") or ".." in p.split("/"):
+        raise ValueError(f"bad relative path: {p!r}")
+    return p
+
+
 @dataclass(frozen=True)
 class RemotePath:
     cluster: "SlurmCluster"
@@ -46,3 +75,8 @@ class RemotePath:
 
     def exists(self) -> bool:
         return self.cluster.conn.exists(self.path)
+
+    def ls(self) -> dict[str, int]:
+        """{relative path: size} of the files under this directory."""
+        self.cluster.connect()
+        return {f["path"]: f["size"] for f in list_files(self.cluster.conn, self.path) or []}

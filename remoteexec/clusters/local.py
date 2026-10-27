@@ -1,64 +1,49 @@
-"""LocalCluster — subprocess execution for tests/offline use (§4)."""
+"""LocalCluster — runs everything on this machine (tests, offline work)."""
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
-from ..function import _run_local_subprocess
-from ..job import JobState
+from ..function import _as_call, _env_var, _run_local_subprocess
+from ..job import JobArray, JobState, LocalJob, slug
 from .base import Cluster
 
 
-class _ImmediateJob:
-    """A job whose work already ran synchronously in-process."""
-
-    def __init__(self, result, name):
-        self._result = result
-        self.name = name
-        self.job_id = "local"
-
-    def state(self):
-        return JobState.COMPLETED
-
-    def done(self):
-        return True
-
-    def wait(self, **kw):
-        return JobState.COMPLETED
-
-    def result(self, **kw):
-        return self._result
-
-    def stream(self, **kw):
-        print("(local run — no streaming)")
-
-
 class LocalCluster(Cluster):
-    """Runs functions locally via the same pack->runner->load path (or in-process)."""
+    """Same API as SlurmCluster; work runs synchronously (in-process, or in
+    a subprocess under ``env`` if given)."""
 
     def __init__(self, env=None, local_env=None):
         self.env = env
         self.local_env = local_env or env
 
+    def _outdir(self, name) -> Path:
+        return Path.cwd() / "remoteexec-out" / f"{slug(name)}-local"
+
     def submit(self, fn, args, kwargs, resources, *, env=None, name=None,
-               setup=(), sync=True):
-        use_env = env or self.local_env
+               setup=(), sync=None):
+        name = name or getattr(fn, "__name__", "job")
+        use_env, outdir = env or self.local_env, self._outdir(name)
         if use_env is None:
-            result = fn(*args, **kwargs)
+            with _env_var("REMOTEEXEC_OUTPUT_DIR", str(outdir)):
+                result = fn(*args, **kwargs)
         else:
-            result = _run_local_subprocess(fn, args, kwargs, use_env)
-        return _ImmediateJob(result, name or getattr(fn, "__name__", "job"))
+            result = _run_local_subprocess(fn, args, kwargs, use_env, outdir=outdir)
+        return LocalJob(result, name, outdir)
 
     def map(self, fn, iterable, *, resources, **kw):
-        from ..job import JobArray
-        jobs = []
-        for item in iterable:
-            if isinstance(item, dict):
-                jobs.append(self.submit(fn, (), item, resources, **kw))
-            elif isinstance(item, tuple):
-                jobs.append(self.submit(fn, item, {}, resources, **kw))
-            else:
-                jobs.append(self.submit(fn, (item,), {}, resources, **kw))
-        return JobArray(jobs)
+        kw.pop("array_throttle", None)
+        return JobArray([self.submit(fn, *_as_call(item), resources, **kw) for item in iterable])
+
+    def run(self, command, *, name=None, env=None, setup=(), sync=None, **resources):
+        name = name or command.split()[0]
+        outdir = self._outdir(name)
+        outdir.mkdir(parents=True, exist_ok=True)
+        script = "\n".join([*setup, command])
+        rc = subprocess.run(["bash", "-c", script],
+                            env={**os.environ, "REMOTEEXEC_OUTPUT_DIR": str(outdir)}).returncode
+        return LocalJob(rc, name, outdir)
 
     def status(self, job_id):
         return JobState.COMPLETED

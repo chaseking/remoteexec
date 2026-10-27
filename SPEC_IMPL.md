@@ -1,3 +1,6 @@
+> **Historical design document (v0.2/v0.3 draft).** The README describes current behavior;
+> where they differ, the README and the code win.
+
 # `remoteexec` — Implementation Specification
 
 > **Status:** Draft v0.3 — design proposal for review

@@ -5,7 +5,7 @@ user/password (ssh-config alias `axon`), no env specified. Submits a job that
 counts down from 10 to 1 (one second each), streams the live log, then pulls the
 result back and verifies it.
 
-Environment parity (§26): functions are shipped by value with ``cloudpickle``,
+Environment parity: functions are shipped by value with ``cloudpickle``,
 so the local interpreter must produce pickles the remote env can read. Axon's
 default conda env (`base`) is currently Python 3.11 + cloudpickle 2.2.1. If the
 local interpreter doesn't match, this test transparently re-executes itself
@@ -146,6 +146,23 @@ def test_axon_countdown():
         assert rc == 0, f"re-executed run failed (rc={rc})"
         return
     run_countdown()
+
+
+@pytest.mark.skipif(not axon_reachable(), reason="axon cluster not reachable")
+def test_axon_command_and_outputs():
+    """Shell-command job (nothing pickled: no parity needed) writing an output file."""
+    from remoteexec.clusters.presets import AxonCluster
+
+    cluster = AxonCluster(check_env=False)
+    job = cluster.run(
+        "echo hello && python -c 'import platform; print(platform.python_version())' "
+        '> "$REMOTEEXEC_OUTPUT_DIR/py.txt"',
+        partition=PARTITION, time="00:05:00", mem="1G", cpus_per_task=1, name="rx-cmd-test")
+    print(f"\nsubmitted job {job.job_id}", flush=True)
+    job.result(timeout=300)
+    assert "hello" in job.logs()
+    assert list(job.outputs()) == ["py.txt"]
+    assert job.read_output("py.txt").startswith("3.")
 
 
 if __name__ == "__main__":

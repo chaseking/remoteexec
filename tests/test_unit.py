@@ -1,4 +1,4 @@
-"""Offline unit tests — no cluster needed (§23)."""
+"""Offline unit tests — no cluster needed."""
 from __future__ import annotations
 
 from remoteexec.clusters.slurm import env_problems

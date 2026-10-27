@@ -1,4 +1,4 @@
-"""Slurm resource specification — §9."""
+"""Slurm resource specification."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace

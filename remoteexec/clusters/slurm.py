@@ -1,33 +1,47 @@
-"""SlurmCluster (concrete) — §8.1, §14."""
+"""SlurmCluster: sync code, submit jobs, reattach to them.
+
+Remote layout::
+
+    <remote_root>/<project>/                 workspace: mirror of local_dir (shared, incremental)
+    <remote_root>/<project>/.rx/<session>/   one per submission
+        run.sbatch  _runner.py  lib/  payload.pkl | payloads/<i>.pkl
+        result.pkl | results/<i>.pkl  logs/<jobid>.out  out/ (| out/<i>/)
+
+A submission is one ssh round trip (a gzip tarball piped into
+``tar x && sbatch``), plus an rsync only when the local code changed.
+"""
 from __future__ import annotations
 
-import logging
+import hashlib
+import io
+import json
 import secrets
 import shlex
 import sys
+import tarfile
 import time
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
+from .. import _runner, state
+from .. import sync as syncmod
+from ..accounting import batch_status, expand_array_spec  # noqa: F401 (re-exported)
 from ..connection import SSHConnection
-from ..environment import RawSetup, env_label
-from ..errors import EnvParityWarning
-from ..job import Job, JobArray, JobState, _parse_state
+from ..environment import RawSetup, env_label, wrap_command
+from ..errors import EnvParityWarning, SubmissionError
+from ..hosts import canonical
+from ..job import _STATE_CMD, Job, JobArray, JobState, _parse_state, slug
 from ..paths import RemotePath, rq
 from ..resources import SlurmResources
 from ..serialize import pack_payload
 from ..templates import render_sbatch
-from .. import _runner, state
 from .base import Cluster
 
-log = logging.getLogger("remoteexec")
-
-DEFAULT_EXCLUDES = [
-    ".git/", "__pycache__/", "*.pyc", ".venv/", "node_modules/",
-    ".ipynb_checkpoints/", ".remoteexec/", "*.egg-info/", ".mypy_cache/",
-    ".DS_Store",
-    ".rx/",  # per-run payload/result/log dirs live here; never sync/clobber them
-]
+DEFAULT_EXCLUDES = syncmod.DEFAULT_EXCLUDES
+_gitignore_excludes = syncmod.gitignore_excludes
+SYNC_MISSING = 97  # exit status of the "workspace already has this code" guard
+ENV_CHECK_TTL = 3 * 24 * 3600
 
 
 def find_project_root(start: Path) -> Path:
@@ -39,121 +53,15 @@ def find_project_root(start: Path) -> Path:
     return start
 
 
-def new_session_id() -> str:
-    return time.strftime("%Y%m%d-%H%M") + "-" + secrets.token_hex(3)
-
-
-def expand_array_spec(jid: str) -> list[str]:
-    """Expand squeue's compact array notation into individual task ids.
-
-    Pending tasks are reported as ``123_[2-5]`` (or ``123_[0-9%2]`` with a
-    throttle) rather than one row each, so a literal match against a manifest
-    key like ``123_3`` would miss every pending task.
-    """
-    if "_[" not in jid or not jid.endswith("]"):
-        return [jid]
-    base, _, spec = jid.partition("_[")
-    spec = spec[:-1].split("%")[0]  # drop the trailing ] and any %throttle
-    out = []
-    for part in spec.split(","):
-        part = part.strip()
-        if "-" in part:
-            lo, _, hi = part.partition("-")
-            try:
-                out.extend(f"{base}_{i}" for i in range(int(lo), int(hi) + 1))
-            except ValueError:
-                return [jid]
-        elif part.isdigit():
-            out.append(f"{base}_{part}")
-    return out or [jid]
-
-
-def batch_status(conn, job_ids, *, timeout=None, since=None):
-    """One batched Slurm query for many jobs on a host.
-
-    ``since`` (a ``datetime``) switches accounting from an explicit id list to
-    a user+time-window scan, and the queue lookup from ``-j`` to ``-u``. The
-    cost of ``sacct -j`` grows with the id list — 717 ids measured ~13s on a
-    busy controller, against ~1s for one windowed scan — so callers holding a
-    large manifest should pass the oldest time they still care about. Jobs
-    outside the window come back absent (they are still picked up by the queue
-    lookup while they are running).
-
-    Returns {job_id: {"state": str, "start": str, "end": str,
-                       "elapsed": str, "exitcode": str, "raw": str}}.
-    Uses a single sacct call (main job rows only) plus a squeue fallback for
-    jobs not yet visible in sacct accounting (freshly submitted / pending).
-    ``raw`` is the JobIDRaw allocation number, which is what names an array
-    task's log file (§ ``logtail.log_filename``); it comes along free here
-    rather than costing a second query per job.
-    ``timeout`` bounds each remote call, for callers (the GUI) that must not
-    block indefinitely on an unresponsive login node.
-    """
-    job_ids = [str(j) for j in job_ids]
-    if not job_ids:
-        return {}
-    wanted = set(job_ids)
-    info: dict[str, dict] = {}
-
-    fmt = "JobID,State,Start,End,Elapsed,ExitCode,JobIDRaw"
-    if since is not None:
-        # `now-2days` style offsets are not accepted by every Slurm build; an
-        # absolute timestamp is.
-        selector = f"-u $(whoami) -S {since.strftime('%Y-%m-%dT%H:%M:%S')}"
-    else:
-        selector = f"-j {','.join(job_ids)}"
-    out = conn.run(
-        f"sacct {selector} --format={fmt} -Pn 2>/dev/null",
-        check=False, timeout=timeout,
-    ).stdout
-    for line in out.splitlines():
-        parts = line.split("|")
-        if len(parts) < 6:
-            continue
-        jid, state, start, end, elapsed, exitcode = parts[:6]
-        if "." in jid:  # skip .batch/.extern sub-steps
-            continue
-        if jid not in wanted:  # a windowed scan sees the user's other jobs too
-            continue
-        info[jid] = {
-            "state": state.split()[0] if state.strip() else "",
-            "start": start, "end": end,
-            "elapsed": elapsed, "exitcode": exitcode,
-            "raw": parts[6].strip() if len(parts) > 6 else "",
-        }
-
-    missing = [j for j in job_ids if j not in info or not info[j]["state"]]
-    if missing:
-        # Jobs accounting cannot answer for: freshly submitted, still pending,
-        # or (with a window) started before it. The queue knows them all.
-        sel = f"-u $(whoami)" if since is not None else f"-j {','.join(missing)}"
-        q = conn.run(
-            f"squeue {sel} -h -o '%i|%T|%M|%S' 2>/dev/null",
-            check=False, timeout=timeout,
-        ).stdout
-        want_missing = set(missing)
-        for line in q.splitlines():
-            parts = line.split("|")
-            if len(parts) < 3:
-                continue
-            state, elapsed = parts[1], parts[2]
-            start = parts[3] if len(parts) > 3 else ""
-            for jid in expand_array_spec(parts[0]):
-                if jid not in want_missing:
-                    continue
-                info[jid] = {
-                    "state": state.strip(), "start": start, "end": "",
-                    "elapsed": elapsed, "exitcode": "", "raw": "",
-                }
-    return info
+def new_session_id(name: str = "") -> str:
+    tag = f"-{slug(name)[:24]}" if name else ""
+    return time.strftime("%Y%m%d-%H%M%S") + tag + "-" + secrets.token_hex(3)
 
 
 def env_problems(local, remote) -> list[str]:
-    """Human-readable list of parity problems between (py_minor, cloudpickle_ver)
-    tuples. By-value cloudpickle needs matching Python minor + cloudpickle major.
-    Empty list means the two environments are compatible."""
-    lpy, lcp = local
-    rpy, rcp = remote
+    """Parity problems between (py_minor, cloudpickle_ver) tuples. By-value
+    cloudpickle needs matching Python minor + cloudpickle major."""
+    (lpy, lcp), (rpy, rcp) = local, remote
     problems = []
     if lpy != rpy:
         problems.append(f"Python {lpy} (local) vs {rpy} (remote)")
@@ -162,29 +70,59 @@ def env_problems(local, remote) -> list[str]:
     return problems
 
 
-def _gitignore_excludes(root: Path) -> list[str]:
-    gi = root / ".gitignore"
-    if not gi.exists():
-        return []
-    out = []
-    for line in gi.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            out.append(line)
-    return out
+_lib_cache: dict[str, bytes] | None = None
+
+
+def _lib_files() -> dict[str, bytes]:
+    """The package's .py files, shipped as a fallback import for the job."""
+    global _lib_cache
+    if _lib_cache is None:
+        pkg = Path(__file__).resolve().parent.parent
+        _lib_cache = {
+            "lib/remoteexec/" + p.relative_to(pkg).as_posix(): p.read_bytes()
+            for p in sorted(pkg.rglob("*.py")) if "__pycache__" not in p.parts
+        }
+    return _lib_cache
+
+
+def _tarball(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=6) as tf:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o644
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _name_from_command(command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    for t in tokens:
+        if t.endswith((".py", ".sh")):
+            return Path(t).stem
+    return Path(tokens[0]).name if tokens else "cmd"
+
+
+@dataclass
+class _SyncPlan:
+    scope: object
+    rel: str
+    excludes: list
+    sig: str
+    key: str  # identifies (host, workspace, scope) in the local cache
 
 
 class SlurmCluster(Cluster):
     def __init__(self, host, *, user=None, port=None, identity_file=None,
                  remote_root="~/remoteexec", project=None, local_dir=None,
                  env=None, local_env=None, default_resources=None, setup=(),
-                 excludes=(), respect_gitignore=True, check_env=True):
-        self.conn = SSHConnection(host, user=user, port=port,
-                                  identity_file=identity_file)
-        self.local_dir = (
-            Path(local_dir).resolve() if local_dir
-            else find_project_root(Path.cwd())
-        )
+                 excludes=(), respect_gitignore=True, check_env=True,
+                 sync=True, verbose=True):
+        self.conn = SSHConnection(host, user=user, port=port, identity_file=identity_file)
+        self.local_dir = Path(local_dir).resolve() if local_dir else find_project_root(Path.cwd())
         self.remote_root = remote_root
         self.project = project or self.local_dir.name
         self.env = env or RawSetup("")
@@ -197,92 +135,101 @@ class SlurmCluster(Cluster):
         self.excludes = list(excludes)
         self.respect_gitignore = respect_gitignore
         self.check_env = check_env
+        self.sync = syncmod.normalize(sync)  # default scope, see remoteexec.sync
+        self.verbose = verbose
         self._connected = False
         self._env_checked = False
+        self._root_made = False
+
+    def __repr__(self):
+        return f"{type(self).__name__}(host={self.conn.host!r}, project={self.project!r})"
 
     @property
     def project_root(self) -> str:
         return f"{self.remote_root}/{self.project}"
 
     def connect(self):
-        if not self._connected:
-            self.conn.open()
-            self._resolve_remote_root()
-            self._connected = True
-
-    def _resolve_remote_root(self):
-        # Slurm's `#SBATCH --output=` does not expand `~`, so resolve the remote
-        # home to an absolute path once and use that everywhere.
+        if self._connected:
+            return
         if self.remote_root.startswith("~"):
-            home = self.conn.run("printf %s \"$HOME\"").stdout.strip()
+            # `#SBATCH --output=` doesn't expand `~`: resolve the home once.
+            # This round trip doubles as the ControlMaster warm-up.
+            home = self.conn.run('printf %s "$HOME"').stdout.strip()
             if home:
                 self.remote_root = home + self.remote_root[1:]
+        else:
+            self.conn.open()
+        self._connected = True
 
-    # ---- environment parity (§25/§26) ----
+    def _say(self, msg: str):
+        if self.verbose:
+            print(f"[remoteexec] {msg}", file=sys.stderr, flush=True)
+
+    # ---- environment parity ----
     def remote_env_versions(self, env=None):
-        """(python_minor, cloudpickle_version) of the *remote* environment the
-        job will run in, or None if it couldn't be determined. Activates the env
-        exactly as the sbatch script does, then asks its python."""
+        """(python_minor, cloudpickle_version) of the remote env as the job
+        will see it, or None if python/cloudpickle couldn't be loaded."""
         self.connect()
         use_env = env or self.env
-        pycode = (
-            "import sys, cloudpickle; "
-            'print("REMOTEEXEC_ENV", "%d.%d" % sys.version_info[:2], '
-            "cloudpickle.__version__)"
-        )
-        script = "\n".join(
-            [use_env.activation_script(),
-             f"{use_env.launcher()} -c {shlex.quote(pycode)}"]
-        )
-        out = self.conn.run(script, check=False).stdout
-        for line in out.splitlines():
+        pycode = ('import sys, cloudpickle; print("REMOTEEXEC_ENV", '
+                  '"%d.%d" % sys.version_info[:2], cloudpickle.__version__)')
+        script = f"{use_env.activation_script()}\n{use_env.launcher()} -c {shlex.quote(pycode)}"
+        for line in self.conn.run(script, check=False).stdout.splitlines():
             if line.startswith("REMOTEEXEC_ENV"):
                 _, py, cp = line.split()
                 return py, cp
-        return None  # cloudpickle missing or python failed to launch
+        return None
 
     def _maybe_warn_env(self, env=None):
+        """Warn once if pickles made here can't be read there. A passing check
+        is cached on disk for a few days, so it costs a round trip rarely."""
         if not self.check_env or self._env_checked:
             return
         self._env_checked = True
         try:
             import cloudpickle
 
-            local = (f"{sys.version_info.major}.{sys.version_info.minor}",
-                     cloudpickle.__version__)
+            use_env = env or self.env
+            local = (f"{sys.version_info.major}.{sys.version_info.minor}", cloudpickle.__version__)
+            key = hashlib.sha1(json.dumps([
+                canonical(self.conn.host), use_env.activation_script(), use_env.launcher(), local,
+            ]).encode()).hexdigest()[:16]
+            cache_path = state.home() / "envcheck.json"
+            cache = state.read_json(cache_path)
+            if time.time() - cache.get(key, 0) < ENV_CHECK_TTL:
+                return
             remote = self.remote_env_versions(env)
         except Exception:
             return  # never let the diagnostic break a submission
         if remote is None:
             warnings.warn(
                 f"remoteexec: could not import cloudpickle in the remote env "
-                f"({self.env.__class__.__name__}); the job will fail to "
-                f"unpickle its payload. Install cloudpickle there (local has "
-                f"{local[1]}).",
-                EnvParityWarning, stacklevel=3,
-            )
+                f"({env_label(use_env) or type(use_env).__name__}); function jobs will "
+                f"fail to unpickle. Install cloudpickle there (local has {local[1]}).",
+                EnvParityWarning, stacklevel=4)
             return
         problems = env_problems(local, remote)
         if problems:
             warnings.warn(
-                "remoteexec: local/remote environment mismatch — "
-                + "; ".join(problems)
-                + ". Functions are shipped by value with cloudpickle, so this "
-                "can cause unpickling errors on the cluster. Match the Python "
-                "minor version and cloudpickle major version, or write large "
-                "artifacts to disk and fetch them instead of returning them.",
-                EnvParityWarning, stacklevel=3,
-            )
+                "remoteexec: local/remote environment mismatch — " + "; ".join(problems)
+                + ". Functions are shipped by value with cloudpickle, so this can cause "
+                "unpickling errors on the cluster. Match the Python minor and cloudpickle "
+                "major versions, or submit a shell command with cluster.run(...).",
+                EnvParityWarning, stacklevel=4)
+            return
+        cache[key] = time.time()
+        state.write_json(cache_path, cache)
 
-    # ---- paths & transfer (§8) ----
+    # ---- paths & transfer ----
     def _resolve(self, p: str) -> str:
         p = str(p)
         return p if p[:1] in ("/", "~", "$") else f"{self.project_root}/{p}"
 
     def make_path(self, *parts, mkdir=True) -> RemotePath:
+        """Handle on a durable path relative to the remote project root."""
+        self.connect()
         remote = self._resolve("/".join(str(p) for p in parts))
         if mkdir:
-            self.connect()
             self.conn.run(f"mkdir -p {rq(remote)}")
         return RemotePath(self, remote)
 
@@ -301,98 +248,187 @@ class SlurmCluster(Cluster):
         self.conn.rsync(str(Path(local).expanduser()), remote_abs, up=True)
         return RemotePath(self, remote_abs)
 
-    def _all_excludes(self) -> list[str]:
+    # ---- code sync ----
+    def _excludes(self) -> list[str]:
         ex = list(DEFAULT_EXCLUDES)
         if self.respect_gitignore:
-            ex += _gitignore_excludes(self.local_dir)
-        ex += self.excludes
-        return ex
+            ex += syncmod.gitignore_excludes(self.local_dir)
+        return ex + self.excludes
 
-    def _sync_up(self, workdir: str):
-        # trailing slash -> copy *contents* of the project root into workdir
-        self.conn.rsync(
-            f"{self.local_dir}/", workdir, up=True,
-            excludes=self._all_excludes(), delete=False,
-        )
+    def _cwd_rel(self, sync) -> str:
+        """Remote cwd (relative to the project root) mirrors the local cwd
+        when the cluster's or this call's sync scope is "cwd"."""
+        if "cwd" in (self.sync, syncmod.normalize(sync) if sync is not None else None):
+            return syncmod.cwd_rel(self.local_dir, Path.cwd())
+        return ""
 
-    def _upload_bytes(self, data: bytes, remote_path: str):
-        import tempfile
+    def _plan_sync(self, sync) -> _SyncPlan | None:
+        scope = self.sync if sync is None else syncmod.normalize(sync)
+        if scope == "none":
+            return None
+        rel = syncmod.cwd_rel(self.local_dir, Path.cwd()) if scope == "cwd" else ""
+        excludes = self._excludes()
+        sig = syncmod.tree_signature(self.local_dir, scope, rel, excludes)
+        key = hashlib.sha1(json.dumps(
+            [canonical(self.conn.host), self.project_root, scope, rel]).encode()).hexdigest()[:12]
+        return _SyncPlan(scope, rel, excludes, sig, key)
 
-        with tempfile.NamedTemporaryFile(delete=False) as tf:
-            tf.write(data)
-            tmp = tf.name
-        try:
-            self.conn.rsync(tmp, remote_path, up=True)
-        finally:
-            Path(tmp).unlink(missing_ok=True)
+    def _marker(self, plan: _SyncPlan, sig: str | None = None) -> str:
+        return f"{self.project_root}/.rx/.sync-{plan.key}-{sig or plan.sig}"
 
-    def _upload_text(self, text: str, remote_path: str):
-        self._upload_bytes(text.encode(), remote_path)
+    def _rsync_code(self, plan: _SyncPlan) -> float:
+        t0 = time.time()
+        if not self._root_made:  # rsync creates only the last path component
+            self.conn.run(f"mkdir -p {rq(self.project_root)}")
+            self._root_made = True
+        self.conn.rsync(f"{self.local_dir}/", self.project_root, up=True,
+                        excludes=plan.excludes, extra=syncmod.filter_args(plan.scope, plan.rel))
+        return time.time() - t0
 
-    def _upload_runner(self, remote_path: str):
-        self.conn.rsync(str(Path(_runner.__file__)), remote_path, up=True)
+    def _synced(self) -> dict:
+        return state.read_json(state.home() / "synced.json")
 
-    # ---- submission (§14) ----
-    def submit(self, fn, args, kwargs, resources, *, env=None, name=None,
-               setup=(), sync=True) -> Job:
+    def _remember_sync(self, plan: _SyncPlan):
+        data = self._synced()
+        data[plan.key] = plan.sig
+        state.write_json(state.home() / "synced.json", data)
+
+    def sync_code(self, sync=None, *, force: bool = False) -> bool:
+        """Push the project to the remote workspace now (submissions do this
+        automatically). Returns False if the remote was already up to date."""
         self.connect()
-        self._maybe_warn_env(env)
-        session = new_session_id()
-        # Shared per-project workspace (synced incrementally, reused across runs)
-        # + a tiny per-run dir for this job's payload/result/logs (§8.1, Update 2).
-        workspace = self.project_root
+        plan = self._plan_sync(sync if sync is not None else (self.sync if self.sync != "none" else True))
+        if not force and self._synced().get(plan.key) == plan.sig and self.conn.exists(self._marker(plan)):
+            return False
+        self._rsync_code(plan)
+        rx = f"{self.project_root}/.rx"
+        self.conn.run(f"mkdir -p {rq(rx)} && rm -f {rq(rx)}/.sync-{plan.key}-* && touch {rq(self._marker(plan))}")
+        self._remember_sync(plan)
+        return True
+
+    def _ship(self, rundir: str, files: dict[str, bytes], plan: _SyncPlan | None) -> tuple[str, bool]:
+        """Sync code if needed, unpack ``files`` into ``rundir`` and sbatch.
+        Returns (sbatch output, whether code was rsynced)."""
+        tarball = _tarball(files)
+        synced = False
+        if plan and self._synced().get(plan.key) != plan.sig:
+            self._rsync_code(plan)
+            synced = True
+        rx = f"{self.project_root}/.rx"
+        while True:
+            pre = ""
+            if plan and synced:
+                pre = (f"mkdir -p {rq(rx)} && rm -f {rq(rx)}/.sync-{plan.key}-* "
+                       f"&& touch {rq(self._marker(plan))} && ")
+            elif plan:  # trust the local cache only if the remote agrees
+                pre = f"{{ test -e {rq(self._marker(plan))} || exit {SYNC_MISSING}; }} && "
+            r = self.conn.run(
+                f"{pre}mkdir -p {rq(rundir)} && cd {rq(rundir)} && tar xzmf - "
+                f"&& mkdir -p logs out && sbatch --parsable run.sbatch",
+                input=tarball, check=False)
+            if r.returncode == SYNC_MISSING and plan and not synced:
+                self._rsync_code(plan)
+                synced = True
+                continue
+            break
+        if r.returncode != 0:
+            raise SubmissionError(f"sbatch failed (rc={r.returncode}): {(r.stderr or r.stdout).strip()}")
+        if plan:
+            self._remember_sync(plan)
+        return r.stdout, synced
+
+    @staticmethod
+    def _job_id(sbatch_out: str) -> str:
+        lines = [ln for ln in sbatch_out.strip().splitlines() if ln.strip()]
+        jid = lines[-1].split(";")[0].strip() if lines else ""
+        if not jid.isdigit():
+            raise SubmissionError(f"unexpected sbatch output: {sbatch_out!r}")
+        return jid
+
+    def _pythonpath(self, cwd: str) -> str:
+        """Job cwd, project root, and the remote mirror of each local sys.path
+        entry inside the project — so a module imported from a subdirectory
+        re-imports by the same name on the cluster."""
+        entries = [cwd, self.project_root]
+        root = self.local_dir.resolve()
+        for p in sys.path:
+            if "site-packages" in p:
+                continue
+            try:
+                rel = Path(p or ".").resolve().relative_to(root).as_posix()
+            except (ValueError, OSError):
+                continue
+            entries.append(self.project_root if rel == "." else f"{self.project_root}/{rel}")
+        return ":".join(dict.fromkeys(entries))
+
+    # ---- submission ----
+    def _prepare(self, name, resources, env, setup, sync):
+        self.connect()
+        session = new_session_id(name)
         rundir = f"{self.project_root}/.rx/{session}"
-        logdir = f"{rundir}/logs"
-        self.conn.run(f"mkdir -p {rq(logdir)}")
-
-        if sync:
-            log.info("project root: %s -> %s:%s", self.local_dir,
-                     self.conn.target(), workspace)
-            self._sync_up(workspace)
-        self._upload_bytes(pack_payload(fn, args, kwargs), f"{rundir}/payload.pkl")
-        self._upload_runner(f"{rundir}/_runner.py")
-
+        rel = self._cwd_rel(sync)
+        cwd = f"{self.project_root}/{rel}" if rel else self.project_root
         eff = self.default_resources.merge(resources)
-        eff.job_name = eff.job_name or name or getattr(fn, "__name__", "job")
+        eff.job_name = eff.job_name or name
         use_env = env or self.env
-        script = render_sbatch(
-            eff, env=use_env, setup=[*self.setup, *setup],
-            cd_dir=workspace, logdir=logdir,
-            runner_path=f"{rundir}/_runner.py",
-            payload_path=f"{rundir}/payload.pkl",
-            result_path=f"{rundir}/result.pkl",
-        )
-        self._upload_text(script, f"{rundir}/run.sbatch")
+        common = dict(env=use_env, setup=[*self.setup, *setup], cd_dir=cwd,
+                      logdir=f"{rundir}/logs", pythonpath=self._pythonpath(cwd))
+        return session, rundir, cwd, eff, use_env, common
 
-        out = self.conn.run(f"sbatch --parsable {rq(rundir)}/run.sbatch").stdout
-        job_id = out.split(";")[0].strip()
+    def _make_job(self, job_id, session, rundir, cwd, name, kind, outdir, result_path=None):
+        return Job(self, job_id=job_id, session=session, workdir=cwd, logdir=f"{rundir}/logs",
+                   name=name, rundir=rundir, result_path=result_path, outdir=outdir,
+                   kind=kind, local_base=str(Path.cwd()))
 
-        job = Job(self, job_id=job_id, session=session, workdir=workspace,
-                  logdir=logdir, name=eff.job_name, rundir=rundir)
+    def _record(self, job, use_env, eff, **extra):
         state.record(job, env=env_label(use_env), local_dir=str(self.local_dir),
-                     partition=eff.partition)
-        log.info(
-            "submitted %r as job %s\n         log:    %s:%s/%s.out"
-            "\n         stream: job.stream()    cli: remoteexec logs %s -f",
-            eff.job_name, job_id, self.conn.target(), logdir, job_id, job_id,
-        )
+                     partition=eff.partition, **extra)
+
+    def submit(self, fn, args, kwargs, resources, *, env=None, name=None,
+               setup=(), sync=None) -> Job:
+        name = name or getattr(fn, "__name__", "job")
+        session, rundir, cwd, eff, use_env, common = self._prepare(name, resources, env, setup, sync)
+        self._maybe_warn_env(env)
+        script = render_sbatch(
+            eff, runner_path=f"{rundir}/_runner.py", payload_path=f"{rundir}/payload.pkl",
+            result_path=f"{rundir}/result.pkl", outdir=f"{rundir}/out", **common)
+        files = {"payload.pkl": pack_payload(fn, args, kwargs), **self._runtime_files(),
+                 "run.sbatch": script.encode()}
+        out, synced = self._ship(rundir, files, self._plan_sync(sync))
+        job = self._make_job(self._job_id(out), session, rundir, cwd, eff.job_name, "fn", f"{rundir}/out")
+        self._record(job, use_env, eff)
+        self._announce(job, synced)
+        return job
+
+    def run(self, command: str, *, name=None, env=None, setup=(), sync=None,
+            **resources) -> Job:
+        """Submit a shell command, e.g. ``cluster.run("python train.py --lr 3e-4",
+        partition="ctn", time="01:00:00")``. Runs from the synced project with
+        the cluster's env active; nothing is pickled, so no version parity is
+        needed. ``job.result()`` waits and raises JobFailed on a non-zero exit."""
+        name = name or _name_from_command(command)
+        res = resources.pop("_resources", None) or {}
+        session, rundir, cwd, eff, use_env, common = self._prepare(
+            name, SlurmResources(**{**resources, **res}), env, setup, sync)
+        script = render_sbatch(eff, command=wrap_command(use_env, command),
+                               outdir=f"{rundir}/out", **common)
+        out, synced = self._ship(rundir, {"run.sbatch": script.encode()}, self._plan_sync(sync))
+        job = self._make_job(self._job_id(out), session, rundir, cwd, eff.job_name, "cmd", f"{rundir}/out")
+        self._record(job, use_env, eff, command=command[:500])
+        self._announce(job, synced)
         return job
 
     def map(self, fn, iterable, *, resources, env=None, name=None,
-            setup=(), sync=True, array_throttle=None) -> JobArray:
-        self.connect()
-        self._maybe_warn_env(env)
+            setup=(), sync=None, array_throttle=None) -> JobArray:
         items = list(iterable)
-        session = new_session_id()
-        workspace = self.project_root
-        rundir = f"{self.project_root}/.rx/{session}"
-        logdir = f"{rundir}/logs"
-        self.conn.run(
-            f"mkdir -p {rq(logdir)} {rq(rundir + '/payloads')} "
-            f"{rq(rundir + '/results')}"
-        )
-        if sync:
-            self._sync_up(workspace)
+        if not items:
+            return JobArray([])
+        name = name or getattr(fn, "__name__", "job")
+        session, rundir, cwd, eff, use_env, common = self._prepare(name, resources, env, setup, sync)
+        self._maybe_warn_env(env)
+        eff.array = f"0-{len(items) - 1}" + (f"%{array_throttle}" if array_throttle else "")
+        script = render_sbatch(eff, runner_path=f"{rundir}/_runner.py", array_dir=rundir, **common)
+        files = {}
         for i, item in enumerate(items):
             if isinstance(item, dict):
                 a, kw = (), item
@@ -400,62 +436,66 @@ class SlurmCluster(Cluster):
                 a, kw = item, {}
             else:
                 a, kw = (item,), {}
-            self._upload_bytes(
-                pack_payload(fn, a, kw), f"{rundir}/payloads/{i}.pkl"
-            )
-        self._upload_runner(f"{rundir}/_runner.py")
-
-        eff = self.default_resources.merge(resources)
-        eff.job_name = eff.job_name or name or getattr(fn, "__name__", "job")
-        spec = f"0-{len(items) - 1}"
-        if array_throttle:
-            spec += f"%{array_throttle}"
-        eff.array = spec
-        use_env = env or self.env
-        script = render_sbatch(
-            eff, env=use_env, setup=[*self.setup, *setup],
-            cd_dir=workspace, logdir=logdir,
-            runner_path=f"{rundir}/_runner.py", array_dir=rundir,
-        )
-        self._upload_text(script, f"{rundir}/run.sbatch")
-        out = self.conn.run(f"sbatch --parsable {rq(rundir)}/run.sbatch").stdout
-        array_id = out.split(";")[0].strip()
-
-        jobs = []
+            files[f"payloads/{i}.pkl"] = pack_payload(fn, a, kw)
+        files.update(self._runtime_files())
+        files["run.sbatch"] = script.encode()
+        out, synced = self._ship(rundir, files, self._plan_sync(sync))
+        array_id = self._job_id(out)
+        jobs = [self._make_job(f"{array_id}_{i}", session, rundir, cwd, f"{eff.job_name}[{i}]",
+                               "fn", f"{rundir}/out/{i}", result_path=f"{rundir}/results/{i}.pkl")
+                for i in range(len(items))]
         label = env_label(use_env)
-        for i in range(len(items)):
-            jid = f"{array_id}_{i}"
-            j = Job(self, job_id=jid, session=session,
-                    workdir=workspace, logdir=logdir,
-                    name=f"{eff.job_name}[{i}]",
-                    rundir=rundir,
-                    result_path=f"{rundir}/results/{i}.pkl")
-            state.record(j, env=label, local_dir=str(self.local_dir),
-                         partition=eff.partition)
-            jobs.append(j)
+        state.record_many({j.job_id: state.make_entry(
+            j, env=label, local_dir=str(self.local_dir), partition=eff.partition) for j in jobs})
+        self._say(f"submitted '{eff.job_name}' as array {array_id} ({len(items)} tasks) on "
+                  f"{self.conn.host}{' — code synced' if synced else ''}")
         return JobArray(jobs)
+
+    def _runtime_files(self) -> dict[str, bytes]:
+        return {"_runner.py": Path(_runner.__file__).read_bytes(), **_lib_files()}
+
+    def _announce(self, job: Job, synced: bool):
+        self._say(f"submitted '{job.name}' as job {job.job_id} on {self.conn.host}"
+                  f"{' — code synced' if synced else ''}  (remoteexec logs {job.job_id} -f)")
 
     # ---- job control ----
     def status(self, job_id) -> JobState:
-        out = self.conn.run(
-            f"sacct -j {job_id} --format=State -Pn 2>/dev/null | head -n1",
-            check=False,
-        ).stdout
-        return _parse_state(out)
+        self.connect()
+        return _parse_state(self.conn.run(_STATE_CMD.format(id=job_id), check=False).stdout)
 
     def cancel(self, job_id) -> None:
         self.connect()
         self.conn.run(f"scancel {job_id}", check=False)
 
     def job(self, job_id) -> Job:
+        """Reattach to a job from the local manifest (e.g. after a restart)."""
         rec = state.get(str(job_id))
         if rec is None:
             raise KeyError(f"no manifest entry for job {job_id}")
-        return Job(self, job_id=str(job_id), session=rec["session"],
-                   workdir=rec["workdir"], logdir=rec["logdir"], name=rec["name"],
-                   rundir=rec.get("rundir"))  # old entries: None -> falls back to workdir
+        return job_from_record(self, str(job_id), rec)
+
+    def jobs(self, limit: int = 20) -> list[Job]:
+        """Recent jobs of this cluster submitted from this project, newest first."""
+        host = canonical(self.conn.host)
+        return [job_from_record(self, jid, rec) for jid, rec in state.recent()
+                if rec.get("cluster_host") == host and rec.get("local_dir") == str(self.local_dir)
+                ][:limit]
 
     @classmethod
     def from_config(cls, name=None):
         from ..config import load_cluster
         return load_cluster(cls, name)
+
+
+def job_from_record(cluster, job_id: str, rec: dict) -> Job:
+    return Job(cluster, job_id=job_id, session=rec["session"], workdir=rec["workdir"],
+               logdir=rec["logdir"], name=rec["name"], rundir=rec.get("rundir"),
+               outdir=rec.get("outdir"), kind=rec.get("kind", "fn"),
+               result_path=_array_result(rec, job_id),
+               local_base=rec.get("cwd") or rec.get("local_dir"))
+
+
+def _array_result(rec, job_id):
+    if "_" in job_id and rec.get("rundir"):
+        return f"{rec['rundir']}/results/{job_id.rsplit('_', 1)[1]}.pkl"
+    return None

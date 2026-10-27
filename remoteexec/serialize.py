@@ -1,6 +1,8 @@
-"""Serialization — §11."""
+"""Payload/result (de)serialization with cloudpickle."""
 from __future__ import annotations
 
+import pickle
+import platform
 from pathlib import Path
 
 from .errors import RemoteExecutionError
@@ -9,26 +11,27 @@ __version__ = "0.2.0"
 
 
 def pack_payload(fn, args, kwargs) -> bytes:
-    import pickle
-    # import sys
-    import platform  # gives a simple version rather than the build details in sys.version
     import cloudpickle
 
     inner = cloudpickle.dumps({"fn": fn, "args": args, "kwargs": kwargs})
-    outer = {
+    # The outer layer is plain pickle so the runner can read the version info
+    # (and warn about a mismatch) even when the inner payload won't load.
+    return pickle.dumps({
         "python_version": platform.python_version(),
         "cloudpickle_version": cloudpickle.__version__,
         "remoteexec_version": __version__,
         "payload": inner,
-    }
-    return pickle.dumps(outer)
+    })
 
 
-def load_result(path: Path):
+def unpack_result(data: bytes):
     import cloudpickle
 
-    with open(path, "rb") as fh:
-        out = cloudpickle.load(fh)
+    out = cloudpickle.loads(data)
     if out["status"] == "ok":
         return out["result"]
     raise RemoteExecutionError(out["exc_type"], out["traceback"], out.get("exception"))
+
+
+def load_result(path: Path):
+    return unpack_result(Path(path).read_bytes())

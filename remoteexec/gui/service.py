@@ -6,13 +6,24 @@ kept module-level so they can be unit-tested without a cluster.
 """
 from __future__ import annotations
 
+import mimetypes
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
-from .. import state
-from ..clusters.slurm import SlurmCluster, batch_status
+from .. import hosts, state
+from ..accounting import batch_status
+from ..clusters.slurm import SlurmCluster, job_from_record
+from ..connection import SSHConnection
 from ..logtail import MAX_CHUNK, log_filename, read_chunk, resolve_raw_id
+from ..paths import list_files, rq, safe_relpath
+
+# Previews larger than this are cut (text) or refused (binary).
+PREVIEW_MAX = 512 * 1024
+RAW_MAX = 25 * 1024 * 1024
 
 # Every SSH call the GUI makes is bounded: an unbounded one parks a worker
 # thread forever if a login node hangs, and enough parked workers take the whole
@@ -50,6 +61,10 @@ NO_FILTER_WINDOW = 30 * 24 * 3600
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested)
 # --------------------------------------------------------------------------- #
+def _id_key(job_id: str) -> tuple:
+    return tuple(int(p) if p.isdigit() else 0 for p in str(job_id).split("_"))
+
+
 def is_running(state_str: str) -> bool:
     return (state_str or "").upper() in RUNNING_STATES
 
@@ -159,6 +174,11 @@ def build_row(job_id, rec, live) -> dict:
         "logfile": logfile,
         "end": live.get("end", ""),
         "submitted_at": rec.get("submitted_at", ""),
+        "kind": rec.get("kind", "fn"),
+        "command": rec.get("command", ""),
+        "outdir": rec.get("outdir", ""),
+        "rundir": rec.get("rundir", ""),
+        "local_dir": rec.get("local_dir", ""),
     }
 
 
@@ -177,6 +197,7 @@ class JobService:
         self._cluster_lock = threading.Lock()
         self._host_locks: dict[str, threading.Lock] = {}
         self._raw_ids: dict[str, str] = {}
+        self._host_errors: dict[str, str] = {}  # host -> why its last query failed
 
     def _cluster(self, host: str) -> SlurmCluster:
         # Requests are served from a thread pool, so two of them can race here;
@@ -184,7 +205,7 @@ class JobService:
         with self._cluster_lock:
             c = self._clusters.get(host)
             if c is None:
-                c = SlurmCluster(host=host, check_env=False)
+                c = SlurmCluster(host=host, check_env=False, verbose=False)
                 c.connect()
                 self._clusters[host] = c
             return c
@@ -232,8 +253,10 @@ class JobService:
                     self._cluster(host).conn, stale, timeout=SSH_TIMEOUT,
                     since=since if len(stale) > BY_ID_MAX else None,
                 )
-            except Exception:
+                self._host_errors.pop(host, None)
+            except Exception as e:
                 info = {}
+                self._host_errors[host] = str(e)
             now = time.time()
             with self._lock:
                 for jid in stale:  # cache misses too, so they aren't re-asked
@@ -261,9 +284,12 @@ class JobService:
                 end_dt = parse_slurm_time(row["end"])
                 if matches_filters(row["status"], end_dt, filters, now):
                     rows.append(row)
-        # newest first by submitted time
-        rows.sort(key=lambda r: r.get("submitted_at", ""), reverse=True)
+        # newest first; same-second submissions (array tasks) by id
+        rows.sort(key=lambda r: (r.get("submitted_at", ""), _id_key(r["job_id"])), reverse=True)
         return rows
+
+    def host_errors(self) -> dict[str, str]:
+        return dict(self._host_errors)
 
     def detail(self, job_id: str) -> dict | None:
         rec = state.get(job_id)
@@ -348,3 +374,107 @@ class JobService:
         with self._lock:  # bust cache so the new state shows promptly
             self._status_cache.pop((rec.get("cluster_host", ""), str(job_id)), None)
         return {"ok": True}
+
+    # ---- output files ----
+    def files(self, job_id: str) -> dict:
+        rec = state.get(job_id)
+        if rec is None:
+            return {"error": "unknown job", "files": []}
+        outdir = rec.get("outdir")
+        if not outdir:
+            return {"files": [], "root": "", "exists": False,
+                    "note": "submitted before remoteexec 0.3 — no per-job output dir"}
+        try:
+            files = list_files(self._cluster(rec["cluster_host"]).conn, outdir, timeout=SSH_TIMEOUT)
+        except Exception as e:
+            return {"error": str(e), "files": [], "root": outdir}
+        return {"root": outdir, "files": files or [], "exists": files is not None}
+
+    def _read_file(self, job_id: str, path: str, limit: int):
+        """(size, first ``limit`` bytes) of an output file; raises LookupError/ValueError."""
+        rec = state.get(job_id)
+        if rec is None or not rec.get("outdir"):
+            raise LookupError("unknown job")
+        full = f"{rec['outdir']}/{safe_relpath(path)}"
+        r = self._cluster(rec["cluster_host"]).conn.run(
+            f'f={rq(full)}; [ -f "$f" ] || exit 3; wc -c < "$f"; head -c {int(limit)} "$f"',
+            check=False, text=False, timeout=60)
+        if r.returncode == 3:
+            raise LookupError(f"no such file: {path}")
+        size_line, _, body = r.stdout.partition(b"\n")
+        return int(size_line.strip() or 0), body
+
+    def preview(self, job_id: str, path: str) -> dict:
+        try:
+            size, body = self._read_file(job_id, path, PREVIEW_MAX)
+        except (LookupError, ValueError) as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": f"could not read: {e}"}
+        ctype = mimetypes.guess_type(path)[0] or ""
+        binary = b"\0" in body[:8192]
+        return {"path": path, "size": size, "type": ctype, "binary": binary,
+                "truncated": size > len(body),
+                "text": None if binary else body.decode("utf-8", "replace")}
+
+    def raw(self, job_id: str, path: str) -> tuple[int, str, bytes]:
+        """(HTTP status, content type, body) for serving a file as-is."""
+        try:
+            size, body = self._read_file(job_id, path, RAW_MAX)
+        except LookupError as e:
+            return 404, "text/plain", str(e).encode()
+        except ValueError as e:
+            return 400, "text/plain", str(e).encode()
+        if size > RAW_MAX:
+            return 413, "text/plain", b"file too large to serve; use remoteexec fetch"
+        return 200, mimetypes.guess_type(path)[0] or "application/octet-stream", body
+
+    def fetch_outputs(self, job_id: str) -> dict:
+        rec = state.get(job_id)
+        if rec is None:
+            return {"ok": False, "error": "unknown job"}
+        try:
+            job = job_from_record(self._cluster(rec["cluster_host"]), str(job_id), rec)
+            return {"ok": True, "path": str(job.fetch_outputs())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def reveal(path: str) -> dict:
+        p = Path(path)
+        if not p.exists():
+            return {"ok": False, "error": "no such path"}
+        if sys.platform == "darwin":
+            subprocess.run(["open", "-R", str(p)], check=False)
+        elif sys.platform.startswith("linux"):
+            subprocess.run(["xdg-open", str(p if p.is_dir() else p.parent)], check=False)
+        return {"ok": True}
+
+    # ---- host routing ----
+    def hosts(self) -> dict:
+        seen = sorted({r.get("cluster_host", "") for r in state.all_jobs().values()} - {""})
+        return {"clusters": hosts.load(), "seen": seen}
+
+    def save_hosts(self, clusters: dict) -> dict:
+        from .. import connection
+
+        clean = {}
+        for name, spec in (clusters or {}).items():
+            aliases = [str(h).strip() for h in spec.get("hosts", []) if str(h).strip()]
+            name = str(name).strip()
+            if not name or not aliases:
+                continue
+            active = spec.get("active") or aliases[0]
+            if active != "auto" and active not in aliases:
+                active = aliases[0]
+            clean[name] = {"hosts": aliases, "active": active}
+        hosts.save(clean)
+        connection._auto.clear()
+        with self._lock:  # statuses fetched through the old route are stale
+            self._status_cache.clear()
+        return self.hosts()
+
+    @staticmethod
+    def test_alias(alias: str) -> dict:
+        ok, ms, err = SSHConnection(alias).probe(alias, timeout=8)
+        return {"alias": alias, "ok": ok, "ms": round(ms), "error": err}

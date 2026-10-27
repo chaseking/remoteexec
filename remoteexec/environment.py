@@ -1,6 +1,13 @@
-"""Environments — §10. CondaEnv is the primary/default strategy."""
+"""Environments: how a job's shell is prepared and which python runs it.
+
+Each strategy yields a bash activation snippet and the launcher for the
+runner. Optional ``wrap(cmd)`` adapts a shell-command job (``cluster.run``)
+to strategies that execute inside something (a container, a uv project).
+CondaEnv is the primary/default strategy.
+"""
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -10,6 +17,11 @@ class Environment(Protocol):
     def activation_script(self) -> str: ...
 
     def launcher(self) -> str: ...
+
+
+def wrap_command(env, command: str) -> str:
+    wrap = getattr(env, "wrap", None)
+    return wrap(command) if wrap else command
 
 
 def env_label(env) -> str:
@@ -56,6 +68,10 @@ class UvEnv:
         wth = " ".join(f"--with {p}" for p in self.with_packages)
         return f"uv run {py}{wth} python".strip().replace("  ", " ")
 
+    def wrap(self, command: str) -> str:
+        py = f"--python {self.python} " if self.python else ""
+        return f"uv run {py}-- bash -c {shlex.quote(command)}"
+
 
 @dataclass
 class ModuleEnv:
@@ -74,8 +90,8 @@ class ModuleEnv:
 
 @dataclass
 class CondaEnv:
-    """Primary environment for axon. Activation is simply ``conda activate <name>``,
-    assuming the conda module is already loaded (conda on PATH)."""
+    """``conda activate <name>`` (conda on PATH). ``init=True`` first evals the
+    shell hook, which non-interactive sbatch shells often need."""
 
     name: str
     pre: list[str] = field(default_factory=list)  # extra pre-run commands
@@ -121,6 +137,10 @@ class ApptainerEnv:
         nv = "--nv " if self.nv else ""
         return f"apptainer exec {nv}{self.sif} python"
 
+    def wrap(self, command: str) -> str:
+        nv = "--nv " if self.nv else ""
+        return f"apptainer exec {nv}{self.sif} bash -c {shlex.quote(command)}"
+
 
 @dataclass
 class VenvEnv:
@@ -156,3 +176,9 @@ class ChainEnv:  # e.g. module load THEN conda activate
             if hasattr(p, "launcher"):
                 return p.launcher()
         return "python"
+
+    def wrap(self, command: str) -> str:
+        for p in reversed(self.parts):
+            if hasattr(p, "wrap"):
+                return p.wrap(command)
+        return command

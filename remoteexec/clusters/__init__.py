@@ -1,7 +1,7 @@
 from .base import Cluster
-from .slurm import SlurmCluster, find_project_root
 from .local import LocalCluster
-from .presets import AxonCluster, AxonJaxGpuCluster
+from .presets import PRESETS, AxonCluster, AxonJaxGpuCluster
+from .slurm import SlurmCluster, find_project_root
 
 __all__ = ["Cluster", "SlurmCluster", "LocalCluster", "AxonCluster",
-           "AxonJaxGpuCluster", "find_project_root"]
+           "AxonJaxGpuCluster", "PRESETS", "find_project_root"]

@@ -1,23 +1,36 @@
-"""TOML config — §17."""
+"""TOML config and cluster lookup by name.
+
+Sources, highest priority first (clusters from different files are merged):
+``<project root>/remoteexec.toml``, ``~/.config/remoteexec/config.toml``,
+``[tool.remoteexec]`` in ``<project root>/pyproject.toml``::
+
+    default = "axon"
+
+    [clusters.axon]
+    preset = "axon"              # optional: start from a preset
+    sync = "cwd"                 # see remoteexec.sync
+    setup = ["export WANDB_MODE=offline"]
+    [clusters.axon.env]
+    kind = "conda"
+    name = "torch24"
+    init = true
+    [clusters.axon.default_resources]
+    partition = "ctn"
+    time = "04:00:00"
+"""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 from .environment import ApptainerEnv, CondaEnv, ModuleEnv, RawSetup, UvEnv, VenvEnv
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover
-    import tomli as tomllib
+_KEYS = ("remote_root", "project", "local_dir", "default_resources", "setup", "excludes",
+         "user", "port", "identity_file", "respect_gitignore", "check_env", "sync")
+
 
 def _search_paths() -> list[Path]:
-    """Config files in priority order, highest first.
-
-    Project-local files override the global user config, so a repo can add or
-    redefine clusters on top of your `~/.config` defaults. Project files are
-    resolved from the *project root* (walked up from cwd), not just cwd.
-    """
     from .clusters.slurm import find_project_root  # lazy: avoid import cycle
 
     root = find_project_root(Path.cwd())
@@ -29,6 +42,11 @@ def _search_paths() -> list[Path]:
 
 
 def _read(p: Path) -> dict | None:
+    # imported here: the package also loads on the cluster, where tomli may be absent
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # pragma: no cover
+        import tomli as tomllib
     data = tomllib.loads(p.read_text())
     if p.name == "pyproject.toml":
         data = data.get("tool", {}).get("remoteexec")
@@ -36,14 +54,7 @@ def _read(p: Path) -> dict | None:
 
 
 def _find_config() -> dict | None:
-    """Merge every config source into one mapping.
-
-    Sources are visited highest-priority first; a cluster name (and the
-    top-level `default`) defined in a higher-priority file wins over the same
-    key in a lower-priority one. Clusters from different files are unioned, so
-    you can keep shared clusters in `~/.config` and project-specific ones in a
-    `remoteexec.toml` at the project root.
-    """
+    """Merge every source; a name defined in a higher-priority file wins."""
     merged: dict = {}
     clusters: dict = {}
     found = False
@@ -68,11 +79,11 @@ def _build_env(spec: dict | None):
     if not spec:
         return None
     kind = spec.get("kind", "conda")
+    rest = {k: v for k, v in spec.items() if k != "kind"}
     if kind == "conda":
-        return CondaEnv(spec["name"], pre=spec.get("pre", []),
-                        init=spec.get("init", False))
+        return CondaEnv(spec["name"], pre=spec.get("pre", []), init=spec.get("init", False))
     if kind == "uv":
-        return UvEnv(**{k: v for k, v in spec.items() if k != "kind"})
+        return UvEnv(**rest)
     if kind == "venv":
         return VenvEnv(spec["path"])
     if kind == "module":
@@ -80,11 +91,11 @@ def _build_env(spec: dict | None):
     if kind == "raw":
         return RawSetup(spec.get("script", ""))
     if kind == "apptainer":
-        return ApptainerEnv(**{k: v for k, v in spec.items() if k != "kind"})
+        return ApptainerEnv(**rest)
     raise ValueError(f"unknown env kind: {kind}")
 
 
-def load_cluster(cls, name=None):
+def load_cluster(cls, name=None, **overrides):
     cfg = _find_config()
     if cfg is None:
         raise FileNotFoundError("no remoteexec config found")
@@ -92,22 +103,41 @@ def load_cluster(cls, name=None):
     clusters = cfg.get("clusters", {})
     if name is None:
         if len(clusters) != 1:
-            raise ValueError(
-                "specify a cluster name (no default set); "
-                f"available: {sorted(clusters)}")
+            raise ValueError(f"specify a cluster name (no default set); available: {sorted(clusters)}")
         name = next(iter(clusters))
     if name not in clusters:
-        raise KeyError(
-            f"cluster {name!r} not found in config; available: {sorted(clusters)}")
+        raise KeyError(f"cluster {name!r} not found in config; available: {sorted(clusters)}")
     c = clusters[name]
-    return cls(
-        host=c["host"],
-        remote_root=c.get("remote_root", "~/remoteexec"),
-        project=c.get("project"),
-        local_dir=c.get("local_dir"),
-        env=_build_env(c.get("env")),
-        local_env=_build_env(c.get("local_env")),
-        default_resources=c.get("default_resources"),
-        setup=c.get("setup", ()),
-        excludes=c.get("excludes", ()),
-    )
+    kwargs = {k: c[k] for k in _KEYS if k in c}
+    for k in ("env", "local_env"):
+        if c.get(k):
+            kwargs[k] = _build_env(c[k])
+    kwargs.update(overrides)
+    if c.get("preset"):
+        from .clusters.presets import PRESETS
+
+        if "host" in c:
+            kwargs["host"] = c["host"]
+        return PRESETS[c["preset"]](**kwargs)
+    return cls(host=c.get("host", name), **kwargs)
+
+
+def resolve_cluster(name: str | None = None, **overrides):
+    """A cluster by name: a config entry, else a preset (``axon``), else a
+    bare ssh host. With no name: $REMOTEEXEC_CLUSTER, then the config default."""
+    from .clusters.presets import PRESETS
+    from .clusters.slurm import SlurmCluster
+
+    name = name or os.environ.get("REMOTEEXEC_CLUSTER") or None
+    cfg = _find_config() or {}
+    clusters = cfg.get("clusters", {})
+    if name is None:
+        name = cfg.get("default") or (next(iter(clusters)) if len(clusters) == 1 else None)
+    if name is None:
+        raise ValueError("no cluster given: pass -c NAME (e.g. -c axon), set "
+                         "REMOTEEXEC_CLUSTER, or set `default` in remoteexec.toml")
+    if name in clusters:
+        return load_cluster(SlurmCluster, name, **overrides)
+    if name in PRESETS:
+        return PRESETS[name](**overrides)
+    return SlurmCluster(host=name, **overrides)
