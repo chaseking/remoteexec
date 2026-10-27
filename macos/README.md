@@ -15,7 +15,9 @@ A macOS (13+) menu bar app for remoteexec jobs:
 
 It is a thin native shell around the local `remoteexec gui` server: it reuses one already
 running on the port (default 8765) or starts it through your login shell and stops it on
-quit, so `remoteexec` must be installed (`pip install -e .` / `uv tool install -e .`).
+quit, so `remoteexec` must be installed (`pip install -e .` / `uv tool install -e .`). The app
+finds it through `~/.remoteexec/cli.json`, which records the Python that last ran remoteexec —
+so run any `remoteexec` command (or a script that submits a job) once after installing.
 
 ## Build
 

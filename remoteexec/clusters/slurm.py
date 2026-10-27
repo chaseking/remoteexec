@@ -169,6 +169,7 @@ class SlurmCluster(Cluster):
         else:
             self.conn.open()
         self._connected = True
+        state.remember_cli()
 
     def _say(self, msg: str):
         if self.verbose:
