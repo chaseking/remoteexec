@@ -1,0 +1,27 @@
+[project]
+name = "remoteexec"
+version = "0.2.0"
+description = "Edit code locally, execute it on a remote Slurm cluster."
+requires-python = ">=3.10"
+# cloudpickle must be able to read what the remote env reads; axon's default
+# conda `base` ships 2.2.1, so allow 2.2+ for cross-env parity (§26).
+dependencies = ["cloudpickle>=2.2", "tomli>=2.0; python_version < '3.11'"]
+
+[project.optional-dependencies]
+cli = ["typer>=0.12", "rich>=13"]
+gui = ["fastapi>=0.110", "uvicorn>=0.29"]
+paramiko = ["paramiko>=3.4"]
+
+[project.scripts]
+remoteexec = "remoteexec.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["remoteexec"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"remoteexec/_runner.py" = "remoteexec/_runner.py"
+"remoteexec/gui/static" = "remoteexec/gui/static"
