@@ -6,6 +6,9 @@ from .slurm import SlurmCluster
 
 _EXCLUDES = ["data/raw/", "*.ckpt", "wandb/"]
 
+# conda isn't on axon's PATH (not even in sbatch shells); the lmod module provides it.
+CONDA_MODULE = "anaconda3-2023.09"
+
 
 class AxonCluster(SlurmCluster):
     """`axon` (ssh alias), conda-first. axon has no default partition, so
@@ -13,13 +16,15 @@ class AxonCluster(SlurmCluster):
 
     def __init__(self, *, host="axon", conda_env: str = "base", pre: list[str] | None = None,
                  init: bool = True, local_conda_env: str | None = None, env=None, **overrides):
-        # axon's non-interactive sbatch shells don't define the `conda` shell
-        # function, so `conda activate` needs the hook: init defaults True.
+        # `pre` defaults to loading the conda module; the shell hook (init=True)
+        # then defines `conda activate`, which sbatch shells lack.
+        if pre is None:
+            pre = [f"ml load {CONDA_MODULE}"]
         overrides.setdefault("default_resources", dict(time="04:00:00", cpus_per_task=8, mem="32G"))
         overrides.setdefault("excludes", list(_EXCLUDES))
         super().__init__(
             host=host,
-            env=env or CondaEnv(conda_env, pre=pre or [], init=init),
+            env=env or CondaEnv(conda_env, pre=pre, init=init),
             local_env=overrides.pop("local_env", None) or (
                 CondaEnv(local_conda_env) if local_conda_env else None),
             **overrides,
