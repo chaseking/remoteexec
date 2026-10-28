@@ -145,3 +145,61 @@ def test_build_row_backward_compat():
     assert row2["project_path"] == "/Users/me/proj"
     assert row2["running"] == "05:00"
     assert row2["started"] == "2026-06-18 07:01"
+
+
+def test_status_reads_never_wait_on_a_refresh(rx_home):
+    """A slow sweep runs in the background; requests get the last known state."""
+    import threading
+    import time as _time
+
+    from remoteexec.gui import service as svc_mod
+
+    gate = threading.Event()
+    calls = []
+
+    def slow_batch_status(conn, ids, **kw):
+        calls.append(list(ids))
+        if len(calls) > 1:
+            gate.wait(5)  # the refresh hangs like a stuck login node
+        return {j: {"state": "RUNNING" if len(calls) == 1 else "COMPLETED"} for j in ids}
+
+    svc = svc_mod.JobService(cache_ttl=0.05)
+    svc._cluster = lambda host: type("C", (), {"conn": None})()
+    orig = svc_mod.batch_status
+    svc_mod.batch_status = slow_batch_status
+    try:
+        assert svc._statuses("axon", ["1"])["1"]["state"] == "RUNNING"  # first sight: inline
+        _time.sleep(0.1)
+        t0 = _time.time()
+        assert svc._statuses("axon", ["1"])["1"]["state"] == "RUNNING"  # stale: served at once
+        assert svc._statuses("axon", ["1"])["1"]["state"] == "RUNNING"
+        assert _time.time() - t0 < 0.5
+        gate.set()
+        for _ in range(50):
+            if svc._statuses("axon", ["1"])["1"]["state"] == "COMPLETED":
+                break
+            _time.sleep(0.05)
+        assert svc._statuses("axon", ["1"])["1"]["state"] == "COMPLETED"
+        assert len(calls) <= 4  # one sweep at a time per host, not one per request
+    finally:
+        svc_mod.batch_status = orig
+
+
+def test_failed_refresh_keeps_last_known_state(rx_home):
+    from remoteexec.gui import service as svc_mod
+
+    svc = svc_mod.JobService(cache_ttl=0)
+    svc._cluster = lambda host: type("C", (), {"conn": None})()
+    orig = svc_mod.batch_status
+    try:
+        svc_mod.batch_status = lambda conn, ids, **kw: {j: {"state": "RUNNING"} for j in ids}
+        svc._query("axon", ["1"], None)
+
+        def down(conn, ids, **kw):
+            raise RuntimeError("ssh: timed out")
+
+        svc_mod.batch_status = down
+        assert svc._query("axon", ["1"], None) == {"1": {"state": "RUNNING"}}
+        assert "timed out" in svc.host_errors()["axon"]
+    finally:
+        svc_mod.batch_status = orig

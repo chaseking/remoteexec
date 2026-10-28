@@ -399,12 +399,20 @@ function windowPicker() {
 function renderSidebar() {
   renderConnErrors();
   const { active, finished } = visibleJobs();
-  // Rebuilding identical rows only costs layout work (and closes an open
-  // menu), so skip it when nothing visible changed. The minute is part of the
-  // signature so "5m ago" keeps moving.
-  const sig = JSON.stringify([active, finished, state.view === "job" && state.detail && state.detail.job_id,
-    state.finished, windowLoading(), Math.floor(Date.now() / 60000)]);
-  if (sig === state.listSig) return;
+  // Rebuild rows only when the list itself changed (rebuilding also closes an
+  // open menu); a running job's elapsed time or "5m ago" is updated in place,
+  // so a poll with nothing new costs no layout work.
+  const shape = (j) => [j.job_id, j.name, j.status, j.host, j.partition, j.command];
+  const sig = JSON.stringify([active.map(shape), finished.map(shape),
+    state.view === "job" && state.detail && state.detail.job_id, state.finished, windowLoading()]);
+  if (sig === state.listSig) {
+    for (const j of [...active, ...finished]) {
+      const t = document.querySelector(`.row[data-id="${CSS.escape(j.job_id)}"] .time`);
+      const txt = timeText(j);
+      if (t && t.textContent !== txt) t.textContent = txt;
+    }
+    return;
+  }
   state.listSig = sig;
 
   const list = $("#job-list");
