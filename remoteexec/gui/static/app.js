@@ -520,6 +520,17 @@ function showPane(name) {
     $("#view-" + v).classList.toggle("hidden", v !== name);
   }
   $("#app").classList.toggle("has-detail", name !== "empty");
+  // the top bar shows what the pane is about; ⋯ belongs to a job
+  $("#more-wrap").classList.toggle("hidden", name !== "job");
+  $("#settings-status").classList.toggle("hidden", name !== "settings");
+  if (name === "settings") setBarTitle("Settings");
+  if (name === "empty") setBarTitle("");
+}
+
+function setBarTitle(text, tooltip) {
+  const t = $("#bar-title");
+  t.textContent = text;
+  t.title = tooltip || text;
 }
 
 function leaveJob() {
@@ -557,7 +568,7 @@ function openJob(job) {
   renderJobHeader();
   renderDetails();
   $("#files-count").textContent = "";
-  $("#download-btn").disabled = !job.outdir;
+  $("#download-item").disabled = !job.outdir;
   $("#file-view").replaceChildren(el("div", "file-empty", "Select a file to preview it"));
   $("#files-list").replaceChildren();
   setUrl({ job: job.job_id });
@@ -582,8 +593,7 @@ function syncDetailFromList() {
 
 function renderJobHeader() {
   const j = state.detail;
-  $("#job-title").textContent = j.name;
-  $("#job-title").title = j.command || j.name;
+  setBarTitle(j.name, j.command || j.name);
   renderStatusRow();
 }
 
@@ -808,7 +818,7 @@ async function loadFiles(epoch) {
   state.files = data;
   const n = (data.files || []).length;
   $("#files-count").textContent = n ? String(n) : "";
-  $("#download-btn").disabled = !n;
+  $("#download-item").disabled = !n;
   renderFiles();
 }
 
@@ -912,7 +922,8 @@ function stopFilesPolling() {
 
 async function downloadOutputs() {
   if (!state.detail) return;
-  const btn = $("#download-btn");
+  closeMenus();
+  const btn = $("#download-item");
   btn.disabled = true;
   try {
     toast("Downloading outputs…", 60000);
@@ -1189,6 +1200,40 @@ function initAppSettings() {
   send({ type: "getAppSettings" });
 }
 
+// ---------- window dragging (inside the macOS app only) ----------
+// In the app the top bar sits where the titlebar is, and a native strip there
+// drags the window. Tell it where the bar's controls are so their clicks go
+// to the page instead (like Electron's -webkit-app-region: no-drag).
+function reportNoDrag() {
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.remoteexec;
+  if (!window.remoteexecApp || !bridge) return;
+  const rects = [...document.querySelectorAll("#topbar button, #topbar input, #topbar a")]
+    .filter((e) => e.offsetParent !== null)
+    .map((e) => {
+      const r = e.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+    });
+  const key = JSON.stringify(rects);
+  if (key === reportNoDrag.last) return;
+  reportNoDrag.last = key;
+  bridge.postMessage({ type: "noDrag", rects });
+}
+
+function watchTopbar() {
+  if (!window.remoteexecApp) return;
+  let queued = false;
+  const later = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; reportNoDrag(); });
+  };
+  new ResizeObserver(later).observe($("#topbar"));
+  new MutationObserver(later).observe($("#topbar"),
+    { subtree: true, childList: true, attributes: true, characterData: true });
+  window.addEventListener("resize", later);
+  later();
+}
+
 // ---------- polling control ----------
 async function listLoop() {
   state.listTimer = null;
@@ -1220,8 +1265,8 @@ async function openFromUrl() {
 }
 
 function init() {
-  // Set by the macOS app: the page then sits under its transparent titlebar,
-  // which shows the window title, so the sidebar's own header is hidden.
+  // Set by the macOS app: the top bar then is the window's transparent
+  // titlebar, which shows the window title, so the bar's own brand is hidden.
   if (window.remoteexecApp) {
     document.documentElement.classList.add("in-app");
     const inset = window.remoteexecApp.topInset;
@@ -1238,15 +1283,15 @@ function init() {
   });
   $("#refresh-btn").addEventListener("click", () => { state.listSig = null; startListPolling(); });
   $("#settings-btn").addEventListener("click", openSettings);
-  $("#settings-back").addEventListener("click", backToJobs);
-  $("#back-btn").addEventListener("click", showEmpty);
+  $("#back-btn").addEventListener("click", () => (state.view === "settings" ? backToJobs() : showEmpty()));
   $("#search").addEventListener("input", (e) => { state.query = e.target.value; renderSidebar(); });
   $("#add-cluster").addEventListener("click", addCluster);
   $("#new-aliases").addEventListener("keydown", (e) => { if (e.key === "Enter") addCluster(); });
   document.querySelectorAll(".seg-btn").forEach((b) =>
     b.addEventListener("click", () => selectTab(b.dataset.tab)));
   $("#files-refresh").addEventListener("click", () => loadFiles(state.epoch));
-  $("#download-btn").addEventListener("click", downloadOutputs);
+  $("#download-item").addEventListener("click", downloadOutputs);
+  watchTopbar();
 
   $("#route-btn").addEventListener("click", (e) => {
     if (toggleMenu($("#route-menu"), e)) {

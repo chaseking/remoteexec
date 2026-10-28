@@ -12,6 +12,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     var onOpenBackendSettings: (() -> Void)?
     private(set) var window: NSWindow?
     private var webView: WKWebView?
+    private var dragView: TitlebarDragView?
     private var currentPath = "/"
 
     init(backend: Backend) {
@@ -78,7 +79,8 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         }
 
         // The web view would take every click under the transparent titlebar,
-        // leaving nothing to drag the window by; a native strip sits on top.
+        // leaving nothing to drag the window by; a native strip sits on top and
+        // lets clicks through where the page's top bar has controls.
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 760))
         web.frame = container.bounds
         web.autoresizingMask = [.width, .height]
@@ -88,13 +90,14 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         drag.autoresizingMask = [.width, .minYMargin]
         container.addSubview(drag)
         w.contentView = container
-        w.minSize = NSSize(width: 760, height: 460)
+        w.minSize = NSSize(width: 800, height: 460)  // wider than the page's one-pane layout
         w.isReleasedWhenClosed = false
         w.delegate = self
         w.center()
         _ = w.setFrameAutosaveName("RemoteExecDashboard")
         window = w
         webView = web
+        dragView = drag
     }
 
     private func showError(_ message: String) {
@@ -139,6 +142,11 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
             return
         case "backendSettings":
             onOpenBackendSettings?()
+            return
+        case "noDrag":
+            let rects = body["rects"] as? [[Double]] ?? []
+            dragView?.noDragRects = rects.filter { $0.count == 4 }
+                .map { NSRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
             return
         default:
             break
@@ -197,9 +205,21 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     }
 }
 
-/// Drags the window (double-click: zoom/minimize per the system setting) for
-/// the strip under the transparent titlebar, where the page has no controls.
+/// Drags the window (double-click: zoom/minimize per the system setting) by
+/// the strip under the transparent titlebar, except over the page's controls.
 final class TitlebarDragView: NSView {
+    /// The page's top-bar controls, in page coordinates (top-left origin).
+    var noDragRects: [NSRect] = []
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let p = convert(point, from: superview)
+        guard bounds.contains(p),
+              !noDragRects.contains(where: { $0.insetBy(dx: -2, dy: -2).contains(p) }) else { return nil }
+        return self
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount == 2 else {
             window?.performDrag(with: event)
