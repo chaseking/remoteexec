@@ -63,8 +63,6 @@ const ICONS = {
   globe: S('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 3.8 5.3 3.8 8.5s-1.2 6.1-3.8 8.5c-2.6-2.4-3.8-5.3-3.8-8.5s1.2-6.1 3.8-8.5z"/>'),
   chevron: S('<path d="M6 9l6 6 6-6"/>', ' stroke-width="2.4"'),
   gear: S('<rect x="3.5" y="4" width="17" height="7" rx="2"/><rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7.5 7.5h.01M7.5 16.5h.01"/>'),
-  moon: S('<path d="M20.5 13.5A8.5 8.5 0 1 1 10.5 3.5a6.6 6.6 0 0 0 10 10z"/>'),
-  sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>'),
   back: S('<path d="M15 18l-6-6 6-6"/>', ' stroke-width="2.2"'),
   download: S('<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>', ' stroke-width="2"'),
   more: S('<circle cx="5.5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor"/>'),
@@ -98,9 +96,8 @@ function statusIcon(status) {
 }
 function paintIcons(root) {
   (root || document).querySelectorAll(".ico[data-icon]").forEach((e) => {
-    if (e.dataset.icon !== "theme") e.innerHTML = ICONS[e.dataset.icon] || "";
+    e.innerHTML = ICONS[e.dataset.icon] || "";
   });
-  paintThemeIcon();
 }
 
 // ---------- helpers ----------
@@ -248,25 +245,39 @@ function toggleMenu(menu, e) {
   return open;
 }
 
-// ---------- theme ----------
-function applyTheme(theme, persist) {
-  document.documentElement.setAttribute("data-theme", theme);
-  if (persist) store("rxtheme", theme);
-  paintThemeIcon();
-}
-function paintThemeIcon() {
-  const b = document.querySelector('.ico[data-icon="theme"]');
-  if (b) b.innerHTML = document.documentElement.getAttribute("data-theme") === "dark" ? ICONS.sun : ICONS.moon;
+// ---------- appearance ----------
+// Settings → Appearance: "system" (the default), "light" or "dark". In the
+// macOS app the window itself takes the choice and the page follows it through
+// prefers-color-scheme; in a browser the choice is kept here.
+const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function applyTheme() {
+  const pick = window.remoteexecApp ? "system" : stored("rxappearance", "system");
+  const dark = pick === "dark" || (pick === "system" && !!darkQuery && darkQuery.matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
 }
 function initTheme() {
-  const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
-  const saved = stored("rxtheme", "");
-  applyTheme(saved || (mq && mq.matches ? "dark" : "light"), false);
-  if (mq && mq.addEventListener) {
-    mq.addEventListener("change", (e) => {
-      if (!stored("rxtheme", "")) applyTheme(e.matches ? "dark" : "light", false);
-    });
-  }
+  applyTheme();
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", applyTheme);
+}
+
+// A System / Light / Dark segmented control.
+function markChoice(id, value) {
+  document.querySelectorAll(`#${id} .seg-btn`).forEach((b) =>
+    b.classList.toggle("active", b.dataset.value === value));
+}
+function onChoice(id, pick) {
+  $("#" + id).addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn");
+    if (!b) return;
+    markChoice(id, b.dataset.value);
+    pick(b.dataset.value);
+  });
+}
+function initAppearance() {
+  if (window.remoteexecApp) return;  // the app's settings drive it (initAppSettings)
+  markChoice("appearance-window", stored("rxappearance", "system"));
+  onChoice("appearance-window", (v) => { store("rxappearance", v); applyTheme(); });
 }
 
 // ---------- sidebar ----------
@@ -399,12 +410,20 @@ function windowPicker() {
 function renderSidebar() {
   renderConnErrors();
   const { active, finished } = visibleJobs();
-  // Rebuilding identical rows only costs layout work (and closes an open
-  // menu), so skip it when nothing visible changed. The minute is part of the
-  // signature so "5m ago" keeps moving.
-  const sig = JSON.stringify([active, finished, state.view === "job" && state.detail && state.detail.job_id,
-    state.finished, windowLoading(), Math.floor(Date.now() / 60000)]);
-  if (sig === state.listSig) return;
+  // Rebuild rows only when the list itself changed (rebuilding also closes an
+  // open menu); a running job's elapsed time or "5m ago" is updated in place,
+  // so a poll with nothing new costs no layout work.
+  const shape = (j) => [j.job_id, j.name, j.status, j.host, j.partition, j.command];
+  const sig = JSON.stringify([active.map(shape), finished.map(shape),
+    state.view === "job" && state.detail && state.detail.job_id, state.finished, windowLoading()]);
+  if (sig === state.listSig) {
+    for (const j of [...active, ...finished]) {
+      const t = document.querySelector(`.row[data-id="${CSS.escape(j.job_id)}"] .time`);
+      const txt = timeText(j);
+      if (t && t.textContent !== txt) t.textContent = txt;
+    }
+    return;
+  }
   state.listSig = sig;
 
   const list = $("#job-list");
@@ -512,6 +531,17 @@ function showPane(name) {
     $("#view-" + v).classList.toggle("hidden", v !== name);
   }
   $("#app").classList.toggle("has-detail", name !== "empty");
+  // the top bar shows what the pane is about; ⋯ belongs to a job
+  $("#more-wrap").classList.toggle("hidden", name !== "job");
+  $("#settings-status").classList.toggle("hidden", name !== "settings");
+  if (name === "settings") setBarTitle("Settings");
+  if (name === "empty") setBarTitle("");
+}
+
+function setBarTitle(text, tooltip) {
+  const t = $("#bar-title");
+  t.textContent = text;
+  t.title = tooltip || text;
 }
 
 function leaveJob() {
@@ -549,7 +579,7 @@ function openJob(job) {
   renderJobHeader();
   renderDetails();
   $("#files-count").textContent = "";
-  $("#download-btn").disabled = !job.outdir;
+  $("#download-item").disabled = !job.outdir;
   $("#file-view").replaceChildren(el("div", "file-empty", "Select a file to preview it"));
   $("#files-list").replaceChildren();
   setUrl({ job: job.job_id });
@@ -574,8 +604,7 @@ function syncDetailFromList() {
 
 function renderJobHeader() {
   const j = state.detail;
-  $("#job-title").textContent = j.name;
-  $("#job-title").title = j.command || j.name;
+  setBarTitle(j.name, j.command || j.name);
   renderStatusRow();
 }
 
@@ -632,7 +661,7 @@ function setStatus(st) {
 
 function selectTab(tab) {
   state.tab = tab;
-  document.querySelectorAll(".seg-btn").forEach((b) =>
+  document.querySelectorAll(".seg-btn[data-tab]").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === tab));
   for (const t of ["log", "files", "details"]) {
     $("#tab-" + t).classList.toggle("hidden", t !== tab);
@@ -800,7 +829,7 @@ async function loadFiles(epoch) {
   state.files = data;
   const n = (data.files || []).length;
   $("#files-count").textContent = n ? String(n) : "";
-  $("#download-btn").disabled = !n;
+  $("#download-item").disabled = !n;
   renderFiles();
 }
 
@@ -904,7 +933,8 @@ function stopFilesPolling() {
 
 async function downloadOutputs() {
   if (!state.detail) return;
-  const btn = $("#download-btn");
+  closeMenus();
+  const btn = $("#download-item");
   btn.disabled = true;
   try {
     toast("Downloading outputs…", 60000);
@@ -1160,14 +1190,19 @@ function initAppSettings() {
   if (!window.remoteexecApp || !bridge) return;
   const send = (msg) => bridge.postMessage(msg);
   $("#app-settings").classList.remove("hidden");
+  $("#appearance-menu-row").classList.remove("hidden");
   // The app calls this with its current settings after every change.
   window.remoteexecAppSettings = (s) => {
+    markChoice("appearance-window", s.windowAppearance || "system");
+    markChoice("appearance-menu", s.menuAppearance || "system");
     $("#app-notify").checked = !!s.notify;
     if (document.activeElement !== $("#app-command")) $("#app-command").value = s.backendCommand || "";
     $("#app-command").placeholder = s.detected ? `auto: ${s.detected}` : "auto-detect";
     if (document.activeElement !== $("#app-port")) $("#app-port").value = s.port;
     $("#app-log").textContent = s.log ? `Its output goes to ${s.log}.` : "";
   };
+  onChoice("appearance-window", (v) => send({ type: "setAppSettings", windowAppearance: v }));
+  onChoice("appearance-menu", (v) => send({ type: "setAppSettings", menuAppearance: v }));
   $("#app-notify").addEventListener("change", (e) => send({ type: "setAppSettings", notify: e.target.checked }));
   $("#app-command").addEventListener("change", (e) => send({ type: "setAppSettings", backendCommand: e.target.value.trim() }));
   $("#app-port").addEventListener("change", (e) => {
@@ -1179,6 +1214,40 @@ function initAppSettings() {
     send({ type: "restartBackend" });
   });
   send({ type: "getAppSettings" });
+}
+
+// ---------- window dragging (inside the macOS app only) ----------
+// In the app the top bar sits where the titlebar is, and a native strip there
+// drags the window. Tell it where the bar's controls are so their clicks go
+// to the page instead (like Electron's -webkit-app-region: no-drag).
+function reportNoDrag() {
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.remoteexec;
+  if (!window.remoteexecApp || !bridge) return;
+  const rects = [...document.querySelectorAll("#topbar button, #topbar input, #topbar a")]
+    .filter((e) => e.offsetParent !== null)
+    .map((e) => {
+      const r = e.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+    });
+  const key = JSON.stringify(rects);
+  if (key === reportNoDrag.last) return;
+  reportNoDrag.last = key;
+  bridge.postMessage({ type: "noDrag", rects });
+}
+
+function watchTopbar() {
+  if (!window.remoteexecApp) return;
+  let queued = false;
+  const later = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; reportNoDrag(); });
+  };
+  new ResizeObserver(later).observe($("#topbar"));
+  new MutationObserver(later).observe($("#topbar"),
+    { subtree: true, childList: true, attributes: true, characterData: true });
+  window.addEventListener("resize", later);
+  later();
 }
 
 // ---------- polling control ----------
@@ -1212,8 +1281,8 @@ async function openFromUrl() {
 }
 
 function init() {
-  // Set by the macOS app: the page then sits under its transparent titlebar,
-  // which shows the window title, so the sidebar's own header is hidden.
+  // Set by the macOS app: the top bar then is the window's transparent
+  // titlebar, which shows the window title, so the bar's own brand is hidden.
   if (window.remoteexecApp) {
     document.documentElement.classList.add("in-app");
     const inset = window.remoteexecApp.topInset;
@@ -1223,22 +1292,19 @@ function init() {
   }
   initTheme();
   paintIcons();
+  initAppearance();
 
-  $("#theme-btn").addEventListener("click", () => {
-    const cur = document.documentElement.getAttribute("data-theme");
-    applyTheme(cur === "dark" ? "light" : "dark", true);
-  });
   $("#refresh-btn").addEventListener("click", () => { state.listSig = null; startListPolling(); });
   $("#settings-btn").addEventListener("click", openSettings);
-  $("#settings-back").addEventListener("click", backToJobs);
-  $("#back-btn").addEventListener("click", showEmpty);
+  $("#back-btn").addEventListener("click", () => (state.view === "settings" ? backToJobs() : showEmpty()));
   $("#search").addEventListener("input", (e) => { state.query = e.target.value; renderSidebar(); });
   $("#add-cluster").addEventListener("click", addCluster);
   $("#new-aliases").addEventListener("keydown", (e) => { if (e.key === "Enter") addCluster(); });
-  document.querySelectorAll(".seg-btn").forEach((b) =>
+  document.querySelectorAll(".seg-btn[data-tab]").forEach((b) =>
     b.addEventListener("click", () => selectTab(b.dataset.tab)));
   $("#files-refresh").addEventListener("click", () => loadFiles(state.epoch));
-  $("#download-btn").addEventListener("click", downloadOutputs);
+  $("#download-item").addEventListener("click", downloadOutputs);
+  watchTopbar();
 
   $("#route-btn").addEventListener("click", (e) => {
     if (toggleMenu($("#route-menu"), e)) {

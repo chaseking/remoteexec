@@ -10,8 +10,12 @@ final class JobStore: ObservableObject {
     @Published private(set) var hostErrors: [String: String] = [:]
     @Published private(set) var hosts: HostsInfo?
     @Published private(set) var error: String?
+    /// Minute of the last successful poll (only published when it changes).
     @Published private(set) var lastUpdate: Date?
-    @Published private(set) var refreshing = false
+    // Not @Published: every change re-renders the dropdown, and these flip on
+    // every poll. Views get updates only when the data they show changes.
+    private(set) var refreshing = false
+    private var lastPoll: Date?
 
     /// Poll quickly (the dropdown is open).
     var fast = false
@@ -58,15 +62,18 @@ final class JobStore: ObservableObject {
         }
         do {
             let response: JobsResponse = try await backend.get("/api/jobs?filters=running,finished_6h")
-            notifyFinished(response.jobs, since: lastUpdate)
-            jobs = response.jobs
-            hostErrors = response.errors ?? [:]
-            error = nil
-            lastUpdate = Date()
+            notifyFinished(response.jobs, since: lastPoll)
+            lastPoll = Date()
+            if jobs != response.jobs { jobs = response.jobs }
+            let errors = response.errors ?? [:]
+            if hostErrors != errors { hostErrors = errors }
+            if error != nil { error = nil }
+            let minute = Calendar.current.dateInterval(of: .minute, for: Date())?.start ?? Date()
+            if lastUpdate != minute { lastUpdate = minute }
         } catch {
-            self.error = error.localizedDescription
+            if self.error != error.localizedDescription { self.error = error.localizedDescription }
         }
-        if let info: HostsInfo = try? await backend.get("/api/hosts") {
+        if let info: HostsInfo = try? await backend.get("/api/hosts"), info != hosts {
             hosts = info
         }
     }

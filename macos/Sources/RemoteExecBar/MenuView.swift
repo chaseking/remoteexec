@@ -39,7 +39,6 @@ struct MenuView: View {
             }
             .buttonStyle(.borderless)
             .help("Refresh")
-            .disabled(store.refreshing)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -183,19 +182,25 @@ struct JobRowView: View {
     }
 }
 
+final class PulseState: ObservableObject {
+    @Published var dim = false
+}
+
 struct StatusIcon: View {
     let phase: JobPhase
+    // Not a TimelineView: that re-runs the body every frame on the main thread,
+    // which the jobs window shares. One repeating animation is set up once.
+    @StateObject private var pulse = PulseState()
 
     var body: some View {
-        if phase == .running {
-            // pulse between 0.35 and 1 opacity every 1.8s
-            TimelineView(.animation) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                icon.opacity(0.675 + 0.325 * cos(t * 2 * .pi / 1.8))
+        icon
+            .opacity(phase == .running && pulse.dim ? 0.35 : 1)
+            .onAppear {
+                guard phase == .running, !pulse.dim else { return }
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulse.dim = true
+                }
             }
-        } else {
-            icon
-        }
     }
 
     private var icon: some View {

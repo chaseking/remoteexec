@@ -8,11 +8,41 @@
 </head>
 <body>
   <div class="app" id="app">
+    <!-- ===== Top bar: the window's title row (in the app, under the traffic lights) ===== -->
+    <header class="topbar" id="topbar">
+      <div class="bar-side">
+        <div class="brand"><span class="ico" data-icon="terminal"></span><span>remoteexec</span></div>
+        <span class="spacer"></span>
+        <div class="pop-wrap">
+          <button id="route-btn" class="bar-btn" title="Which ssh alias each cluster connects through">
+            <span class="ico" data-icon="globe"></span><span id="route-label">hosts</span><span class="ico small" data-icon="chevron"></span>
+          </button>
+          <div id="route-menu" class="popmenu right hidden"></div>
+        </div>
+      </div>
+      <div class="bar-main">
+        <button id="back-btn" class="icon-btn back" title="Back to jobs"><span class="ico" data-icon="back"></span></button>
+        <h1 id="bar-title" class="bar-title"></h1>
+        <span class="spacer"></span>
+        <span id="settings-status" class="updated"></span>
+        <div class="pop-wrap hidden" id="more-wrap">
+          <button id="more-btn" class="icon-btn" title="More"><span class="ico" data-icon="more"></span></button>
+          <div id="more-menu" class="popmenu right hidden">
+            <button id="download-item"><span class="ico" data-icon="download"></span>Download outputs</button>
+            <div class="sep"></div>
+            <button data-copy="workdir">Copy remote workdir</button>
+            <button data-copy="outdir">Copy remote output dir</button>
+            <button data-copy="logfile">Copy log path</button>
+            <button data-copy="project_path">Copy local project path</button>
+            <button data-copy="job_id">Copy job id</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="body">
     <!-- ===== Sidebar: the job list, styled like the menu bar dropdown ===== -->
     <aside class="sidebar">
-      <div class="side-top">
-        <div class="brand"><span class="ico" data-icon="terminal"></span><span>remoteexec</span></div>
-      </div>
       <div class="search-row">
         <label class="search">
           <span class="ico" data-icon="search"></span>
@@ -23,16 +53,9 @@
       <div id="conn-error" class="side-warning hidden"></div>
       <div id="job-list" class="job-list"></div>
       <div class="side-foot">
-        <div class="pop-wrap">
-          <button id="route-btn" class="foot-btn" title="Which ssh alias each cluster connects through">
-            <span class="ico" data-icon="globe"></span><span id="route-label">hosts</span><span class="ico small" data-icon="chevron"></span>
-          </button>
-          <div id="route-menu" class="popmenu up hidden"></div>
-        </div>
-        <span class="spacer"></span>
         <span id="updated" class="updated"></span>
+        <span class="spacer"></span>
         <button id="settings-btn" class="icon-btn" title="Settings"><span class="ico" data-icon="gear"></span></button>
-        <button id="theme-btn" class="icon-btn" title="Toggle light/dark"><span class="ico" data-icon="theme"></span></button>
       </div>
     </aside>
 
@@ -49,26 +72,10 @@
       <!-- ===== Job detail ===== -->
       <section id="view-job" class="pane hidden">
         <header class="job-head">
-          <div class="title-row">
-            <button id="back-btn" class="icon-btn back" title="Back to jobs"><span class="ico" data-icon="back"></span></button>
-            <h1 id="job-title"></h1>
-            <span class="spacer"></span>
-            <button id="download-btn" class="btn" title="rsync this job's output files to your machine">
-              <span class="ico" data-icon="download"></span>Download outputs
-            </button>
+          <div class="status-line">
+            <div id="status-row" class="status-row"></div>
             <button id="cancel-btn" class="btn danger hidden">Cancel job</button>
-            <div class="pop-wrap">
-              <button id="more-btn" class="icon-btn" title="More"><span class="ico" data-icon="more"></span></button>
-              <div id="more-menu" class="popmenu right hidden">
-                <button data-copy="workdir">Copy remote workdir</button>
-                <button data-copy="outdir">Copy remote output dir</button>
-                <button data-copy="logfile">Copy log path</button>
-                <button data-copy="project_path">Copy local project path</button>
-                <button data-copy="job_id">Copy job id</button>
-              </div>
-            </div>
           </div>
-          <div id="status-row" class="status-row"></div>
           <nav class="seg" role="tablist">
             <button class="seg-btn active" data-tab="log">Log</button>
             <button class="seg-btn" data-tab="files">Files<span id="files-count" class="count"></span></button>
@@ -106,15 +113,28 @@
 
       <!-- ===== Clusters & hosts ===== -->
       <section id="view-settings" class="pane hidden">
-        <header class="job-head">
-          <div class="title-row">
-            <button id="settings-back" class="icon-btn back" title="Back to jobs"><span class="ico" data-icon="back"></span></button>
-            <h1>Settings</h1>
-            <span class="spacer"></span>
-            <span id="settings-status" class="updated"></span>
-          </div>
-        </header>
         <div class="settings">
+          <h2 class="settings-head">Appearance</h2>
+          <div class="group">
+            <div class="row-line">
+              <span class="label">Window</span>
+              <div class="seg choice" id="appearance-window">
+                <button class="seg-btn active" data-value="system">System</button>
+                <button class="seg-btn" data-value="light">Light</button>
+                <button class="seg-btn" data-value="dark">Dark</button>
+              </div>
+            </div>
+            <!-- the macOS app's menu bar dropdown -->
+            <div class="row-line hidden" id="appearance-menu-row">
+              <span class="label">Menu bar</span>
+              <div class="seg choice" id="appearance-menu">
+                <button class="seg-btn active" data-value="system">System</button>
+                <button class="seg-btn" data-value="light">Light</button>
+                <button class="seg-btn" data-value="dark">Dark</button>
+              </div>
+            </div>
+          </div>
+
           <h2 class="settings-head">Clusters &amp; hosts</h2>
           <p class="muted lead">
             A cluster can be reachable through several ssh aliases from <code>~/.ssh/config</code>
@@ -156,6 +176,7 @@
         </div>
       </section>
     </main>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>

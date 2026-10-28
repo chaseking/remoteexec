@@ -195,20 +195,25 @@ class JobService:
         self._cache_ttl = cache_ttl
         self._status_cache: dict[tuple[str, str], tuple[float, dict]] = {}
         self._lock = threading.Lock()
-        self._cluster_lock = threading.Lock()
         self._host_locks: dict[str, threading.Lock] = {}
+        self._refreshing: set[str] = set()  # hosts with a background sweep running
         self._raw_ids: dict[str, str] = {}
         self._host_errors: dict[str, str] = {}  # host -> why its last query failed
 
     def _cluster(self, host: str) -> SlurmCluster:
-        # Requests are served from a thread pool, so two of them can race here;
-        # without the lock both build a cluster and pay for its connect().
-        with self._cluster_lock:
+        with self._lock:
+            c = self._clusters.get(host)
+        if c is not None:
+            return c
+        # One connect per host at a time, without holding up other hosts: a
+        # connect to an unreachable host can take the whole ssh timeout.
+        with self._host_lock(host):
             c = self._clusters.get(host)
             if c is None:
                 c = SlurmCluster(host=host, check_env=False, verbose=False)
                 c.connect()
-                self._clusters[host] = c
+                with self._lock:
+                    self._clusters[host] = c
             return c
 
     def _host_lock(self, host: str) -> threading.Lock:
@@ -218,52 +223,68 @@ class JobService:
                 lk = self._host_locks[host] = threading.Lock()
             return lk
 
-    def _take_cached(self, host: str, ids):
-        """Split *ids* into {id: info} already cached and the ids still stale."""
+    def _statuses(self, host: str, ids, *, since=None) -> dict:
+        """Status for *ids* on *host*, never waiting on a refresh.
+
+        Known jobs are answered from the cache straight away; if their entry
+        is older than the TTL, one background sweep per host refreshes it.
+        Only jobs never seen before are queried inline. A request that waited
+        for an ssh round trip held one of the browser's few connections to the
+        server, and enough of those froze the whole UI.
+        """
+        ids = [str(j) for j in ids]
         now = time.time()
-        fresh, stale = {}, []
+        known, missing, stale = {}, [], []
         with self._lock:
             for jid in ids:
                 got = self._status_cache.get((host, jid))
-                if got and now - got[0] < self._cache_ttl:
-                    fresh[jid] = got[1]
-                else:
+                if got is None:
+                    missing.append(jid)
+                    continue
+                known[jid] = got[1]
+                if now - got[0] >= self._cache_ttl:
                     stale.append(jid)
-        return fresh, stale
+        if stale:
+            self._refresh_in_background(host, stale, since)
+        if missing:
+            known.update(self._query(host, missing, since))
+        return known
 
-    def _statuses(self, host: str, ids, *, since=None) -> dict:
-        """Status for *ids* on *host*, querying only what the cache lacks.
+    def _refresh_in_background(self, host: str, ids, since):
+        with self._lock:
+            if host in self._refreshing:
+                return
+            self._refreshing.add(host)
 
-        Cached per job rather than per host, so opening one job's console costs
-        a single-id query (fast whatever the manifest size) instead of waiting
-        on a sweep of every job ever submitted.
-        """
-        ids = [str(j) for j in ids]
-        fresh, stale = self._take_cached(host, ids)
-        if not stale:
-            return fresh
-        # One refresh per host at a time: concurrent pollers that all miss the
-        # cache would otherwise fire the same sweep in parallel.
-        with self._host_lock(host):
-            more_fresh, stale = self._take_cached(host, stale)  # filled while waiting?
-            fresh.update(more_fresh)
-            if not stale:
-                return fresh
+        def work():
             try:
-                info = batch_status(
-                    self._cluster(host).conn, stale, timeout=SSH_TIMEOUT,
-                    since=since if len(stale) > BY_ID_MAX else None,
-                )
-                self._host_errors.pop(host, None)
-            except Exception as e:
-                info = {}
-                self._host_errors[host] = str(e)
-            now = time.time()
-            with self._lock:
-                for jid in stale:  # cache misses too, so they aren't re-asked
-                    self._status_cache[(host, jid)] = (now, info.get(jid, {}))
-            fresh.update({j: info.get(j, {}) for j in stale})
-            return fresh
+                self._query(host, ids, since)
+            finally:
+                with self._lock:
+                    self._refreshing.discard(host)
+
+        threading.Thread(target=work, daemon=True, name=f"status-{host}").start()
+
+    def _query(self, host: str, ids, since) -> dict:
+        try:
+            info = batch_status(
+                self._cluster(host).conn, ids, timeout=SSH_TIMEOUT,
+                since=since if len(ids) > BY_ID_MAX else None,
+            )
+            self._host_errors.pop(host, None)
+            ok = True
+        except Exception as e:
+            info, ok = {}, False
+            self._host_errors[host] = str(e)
+        now = time.time()
+        with self._lock:
+            for jid in ids:
+                old = self._status_cache.get((host, jid))
+                # a failed sweep keeps what we knew (re-stamped, so it isn't
+                # retried on every request) rather than blanking the job
+                value = info.get(jid, {}) if ok or old is None else old[1]
+                self._status_cache[(host, jid)] = (now, value)
+            return {jid: self._status_cache[(host, jid)][1] for jid in ids}
 
     def list_jobs(self, filters=None) -> list[dict]:
         manifest = state.all_jobs()
