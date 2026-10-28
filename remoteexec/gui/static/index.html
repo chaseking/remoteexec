@@ -56,7 +56,6 @@
         <span id="updated" class="updated"></span>
         <span class="spacer"></span>
         <button id="settings-btn" class="icon-btn" title="Settings"><span class="ico" data-icon="gear"></span></button>
-        <button id="theme-btn" class="icon-btn" title="Toggle light/dark"><span class="ico" data-icon="theme"></span></button>
       </div>
     </aside>
 
@@ -115,6 +114,27 @@
       <!-- ===== Clusters & hosts ===== -->
       <section id="view-settings" class="pane hidden">
         <div class="settings">
+          <h2 class="settings-head">Appearance</h2>
+          <div class="group">
+            <div class="row-line">
+              <span class="label">Window</span>
+              <div class="seg choice" id="appearance-window">
+                <button class="seg-btn active" data-value="system">System</button>
+                <button class="seg-btn" data-value="light">Light</button>
+                <button class="seg-btn" data-value="dark">Dark</button>
+              </div>
+            </div>
+            <!-- the macOS app's menu bar dropdown -->
+            <div class="row-line hidden" id="appearance-menu-row">
+              <span class="label">Menu bar</span>
+              <div class="seg choice" id="appearance-menu">
+                <button class="seg-btn active" data-value="system">System</button>
+                <button class="seg-btn" data-value="light">Light</button>
+                <button class="seg-btn" data-value="dark">Dark</button>
+              </div>
+            </div>
+          </div>
+
           <h2 class="settings-head">Clusters &amp; hosts</h2>
           <p class="muted lead">
             A cluster can be reachable through several ssh aliases from <code>~/.ssh/config</code>

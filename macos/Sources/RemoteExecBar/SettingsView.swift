@@ -1,6 +1,20 @@
 import AppKit
 import SwiftUI
 
+/// System (follow macOS), Light or Dark: for the jobs window and, separately,
+/// the menu bar dropdown.
+enum Appearance: String {
+    case system, light, dark
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 /// App preferences, stored in UserDefaults.
 final class AppSettings: ObservableObject {
     /// How to launch the CLI; empty = auto-detect.
@@ -13,6 +27,12 @@ final class AppSettings: ObservableObject {
     @Published var notify: Bool {
         didSet { UserDefaults.standard.set(notify, forKey: "notify") }
     }
+    @Published var windowAppearance: Appearance {
+        didSet { UserDefaults.standard.set(windowAppearance.rawValue, forKey: "windowAppearance") }
+    }
+    @Published var menuAppearance: Appearance {
+        didSet { UserDefaults.standard.set(menuAppearance.rawValue, forKey: "menuAppearance") }
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -20,6 +40,8 @@ final class AppSettings: ObservableObject {
         let savedPort = d.integer(forKey: "port")
         port = savedPort > 0 ? savedPort : 8765  // same as `remoteexec gui`, so one can be reused
         notify = d.object(forKey: "notify") as? Bool ?? true
+        windowAppearance = Appearance(rawValue: d.string(forKey: "windowAppearance") ?? "") ?? .system
+        menuAppearance = Appearance(rawValue: d.string(forKey: "menuAppearance") ?? "") ?? .system
     }
 }
 

@@ -60,10 +60,11 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         w.titlebarAppearsTransparent = true
         w.titlebarSeparatorStyle = .none
         w.backgroundColor = Self.pageBackground
+        w.appearance = backend.settings.windowAppearance.nsAppearance  // the page follows it
         let titlebar = max(28, w.frame.height - w.contentLayoutRect.height)
 
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()  // keeps the web UI's theme choice
+        config.websiteDataStore = .default()  // keeps the web UI's own choices (e.g. the finished window)
         // Tells the page it runs under the titlebar and how tall that is, so it
         // keeps the strip free of controls.
         config.userContentController.addUserScript(WKUserScript(
@@ -134,6 +135,13 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
             }
             if let command = body["backendCommand"] as? String { settings.backendCommand = command }
             if let port = body["port"] as? Int, port > 0 { settings.port = port }
+            if let pick = (body["windowAppearance"] as? String).flatMap(Appearance.init(rawValue:)) {
+                settings.windowAppearance = pick
+                window?.appearance = pick.nsAppearance
+            }
+            if let pick = (body["menuAppearance"] as? String).flatMap(Appearance.init(rawValue:)) {
+                settings.menuAppearance = pick
+            }
         case "restartBackend":
             Task {
                 await backend.restart()
@@ -158,6 +166,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         let s = backend.settings
         let payload: [String: Any] = [
             "notify": s.notify, "backendCommand": s.backendCommand, "port": s.port,
+            "windowAppearance": s.windowAppearance.rawValue, "menuAppearance": s.menuAppearance.rawValue,
             "detected": Backend.detectCommand() ?? "", "log": backend.logURL.path,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),

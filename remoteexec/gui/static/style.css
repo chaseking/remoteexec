@@ -349,6 +349,8 @@ code { font-family: var(--mono); font-size: 12px; background: var(--field); padd
 .group .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; padding: 0; cursor: default; }
 .group .row:hover { background: none; }
 .grow { flex: 1 1 240px; }
+.group .seg { margin: 0; }
+.group .row-line:first-child { margin-top: 0; }
 .settings input:not([type="checkbox"]), .settings select {
   height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line-strong);
   background: var(--raised); color: var(--text); font: 12.5px var(--mono);

@@ -63,8 +63,6 @@ const ICONS = {
   globe: S('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 3.8 5.3 3.8 8.5s-1.2 6.1-3.8 8.5c-2.6-2.4-3.8-5.3-3.8-8.5s1.2-6.1 3.8-8.5z"/>'),
   chevron: S('<path d="M6 9l6 6 6-6"/>', ' stroke-width="2.4"'),
   gear: S('<rect x="3.5" y="4" width="17" height="7" rx="2"/><rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7.5 7.5h.01M7.5 16.5h.01"/>'),
-  moon: S('<path d="M20.5 13.5A8.5 8.5 0 1 1 10.5 3.5a6.6 6.6 0 0 0 10 10z"/>'),
-  sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>'),
   back: S('<path d="M15 18l-6-6 6-6"/>', ' stroke-width="2.2"'),
   download: S('<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>', ' stroke-width="2"'),
   more: S('<circle cx="5.5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor"/>'),
@@ -98,9 +96,8 @@ function statusIcon(status) {
 }
 function paintIcons(root) {
   (root || document).querySelectorAll(".ico[data-icon]").forEach((e) => {
-    if (e.dataset.icon !== "theme") e.innerHTML = ICONS[e.dataset.icon] || "";
+    e.innerHTML = ICONS[e.dataset.icon] || "";
   });
-  paintThemeIcon();
 }
 
 // ---------- helpers ----------
@@ -248,25 +245,39 @@ function toggleMenu(menu, e) {
   return open;
 }
 
-// ---------- theme ----------
-function applyTheme(theme, persist) {
-  document.documentElement.setAttribute("data-theme", theme);
-  if (persist) store("rxtheme", theme);
-  paintThemeIcon();
-}
-function paintThemeIcon() {
-  const b = document.querySelector('.ico[data-icon="theme"]');
-  if (b) b.innerHTML = document.documentElement.getAttribute("data-theme") === "dark" ? ICONS.sun : ICONS.moon;
+// ---------- appearance ----------
+// Settings → Appearance: "system" (the default), "light" or "dark". In the
+// macOS app the window itself takes the choice and the page follows it through
+// prefers-color-scheme; in a browser the choice is kept here.
+const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function applyTheme() {
+  const pick = window.remoteexecApp ? "system" : stored("rxappearance", "system");
+  const dark = pick === "dark" || (pick === "system" && !!darkQuery && darkQuery.matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
 }
 function initTheme() {
-  const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
-  const saved = stored("rxtheme", "");
-  applyTheme(saved || (mq && mq.matches ? "dark" : "light"), false);
-  if (mq && mq.addEventListener) {
-    mq.addEventListener("change", (e) => {
-      if (!stored("rxtheme", "")) applyTheme(e.matches ? "dark" : "light", false);
-    });
-  }
+  applyTheme();
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", applyTheme);
+}
+
+// A System / Light / Dark segmented control.
+function markChoice(id, value) {
+  document.querySelectorAll(`#${id} .seg-btn`).forEach((b) =>
+    b.classList.toggle("active", b.dataset.value === value));
+}
+function onChoice(id, pick) {
+  $("#" + id).addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn");
+    if (!b) return;
+    markChoice(id, b.dataset.value);
+    pick(b.dataset.value);
+  });
+}
+function initAppearance() {
+  if (window.remoteexecApp) return;  // the app's settings drive it (initAppSettings)
+  markChoice("appearance-window", stored("rxappearance", "system"));
+  onChoice("appearance-window", (v) => { store("rxappearance", v); applyTheme(); });
 }
 
 // ---------- sidebar ----------
@@ -650,7 +661,7 @@ function setStatus(st) {
 
 function selectTab(tab) {
   state.tab = tab;
-  document.querySelectorAll(".seg-btn").forEach((b) =>
+  document.querySelectorAll(".seg-btn[data-tab]").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === tab));
   for (const t of ["log", "files", "details"]) {
     $("#tab-" + t).classList.toggle("hidden", t !== tab);
@@ -1179,14 +1190,19 @@ function initAppSettings() {
   if (!window.remoteexecApp || !bridge) return;
   const send = (msg) => bridge.postMessage(msg);
   $("#app-settings").classList.remove("hidden");
+  $("#appearance-menu-row").classList.remove("hidden");
   // The app calls this with its current settings after every change.
   window.remoteexecAppSettings = (s) => {
+    markChoice("appearance-window", s.windowAppearance || "system");
+    markChoice("appearance-menu", s.menuAppearance || "system");
     $("#app-notify").checked = !!s.notify;
     if (document.activeElement !== $("#app-command")) $("#app-command").value = s.backendCommand || "";
     $("#app-command").placeholder = s.detected ? `auto: ${s.detected}` : "auto-detect";
     if (document.activeElement !== $("#app-port")) $("#app-port").value = s.port;
     $("#app-log").textContent = s.log ? `Its output goes to ${s.log}.` : "";
   };
+  onChoice("appearance-window", (v) => send({ type: "setAppSettings", windowAppearance: v }));
+  onChoice("appearance-menu", (v) => send({ type: "setAppSettings", menuAppearance: v }));
   $("#app-notify").addEventListener("change", (e) => send({ type: "setAppSettings", notify: e.target.checked }));
   $("#app-command").addEventListener("change", (e) => send({ type: "setAppSettings", backendCommand: e.target.value.trim() }));
   $("#app-port").addEventListener("change", (e) => {
@@ -1276,18 +1292,15 @@ function init() {
   }
   initTheme();
   paintIcons();
+  initAppearance();
 
-  $("#theme-btn").addEventListener("click", () => {
-    const cur = document.documentElement.getAttribute("data-theme");
-    applyTheme(cur === "dark" ? "light" : "dark", true);
-  });
   $("#refresh-btn").addEventListener("click", () => { state.listSig = null; startListPolling(); });
   $("#settings-btn").addEventListener("click", openSettings);
   $("#back-btn").addEventListener("click", () => (state.view === "settings" ? backToJobs() : showEmpty()));
   $("#search").addEventListener("input", (e) => { state.query = e.target.value; renderSidebar(); });
   $("#add-cluster").addEventListener("click", addCluster);
   $("#new-aliases").addEventListener("keydown", (e) => { if (e.key === "Enter") addCluster(); });
-  document.querySelectorAll(".seg-btn").forEach((b) =>
+  document.querySelectorAll(".seg-btn[data-tab]").forEach((b) =>
     b.addEventListener("click", () => selectTab(b.dataset.tab)));
   $("#files-refresh").addEventListener("click", () => loadFiles(state.epoch));
   $("#download-item").addEventListener("click", downloadOutputs);
