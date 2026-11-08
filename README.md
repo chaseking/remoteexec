@@ -181,6 +181,12 @@ breaking change, and release only when asked; either resets the parts after it t
 Bumping matters: the macOS app only offers an update when the pushed version is higher
 than the installed one (see `macos/README.md` → Updates).
 
+**Merging:** when a change is finished (tests pass, version bumped), merge it into `main`
+and push `main` without waiting to be asked: the macOS app's updater follows `main`, so
+work left on a side branch never reaches the installed app. Merge with a fast-forward or
+a merge commit (never rewrite `main`'s history), and if `main` has moved on, merge it into
+your branch first and re-run the tests.
+
 ## Changes in 0.3
 
 New: `remoteexec run` / `cluster.run` for shell commands; per-job `output_dir()` with
