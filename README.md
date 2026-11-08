@@ -185,7 +185,8 @@ than the installed one (see `macos/README.md` → Updates).
 and push `main` without waiting to be asked: the macOS app's updater follows `main`, so
 work left on a side branch never reaches the installed app. Merge with a fast-forward or
 a merge commit (never rewrite `main`'s history), and if `main` has moved on, merge it into
-your branch first and re-run the tests.
+your branch first and re-run the tests. Then delete the merged branch, locally and on the
+remote. (These rules are also in `CLAUDE.md`.)
 
 ## Changes in 0.3
 
