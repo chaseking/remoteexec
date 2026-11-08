@@ -211,6 +211,21 @@ body.resizing-side iframe { pointer-events: none; }
 .side-warning .ico { color: var(--running); width: 14px; height: 14px; margin-top: 1px; }
 .side-warning b { font-weight: 600; }
 
+/* The app's "update available" button: the app icon's purple. */
+.update-btn {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+  height: 22px; min-width: 22px; padding: 0 4px; margin-right: 4px;
+  border: none; border-radius: 6px; cursor: pointer; color: #fff;
+  background: linear-gradient(#6842a8, #3c206e);
+  box-shadow: 0 1px 2px rgba(60, 32, 110, 0.35);
+}
+.update-btn:hover { background: linear-gradient(#7650b8, #4a2a80); }
+.update-btn:disabled { cursor: default; opacity: 0.85; }
+.update-btn .ico { width: 14px; height: 14px; }
+.update-label { font-size: 11.5px; font-weight: 600; padding-right: 3px; white-space: nowrap; }
+.update-btn.busy .ico { animation: update-pulse 1.2s ease-in-out infinite; }
+@keyframes update-pulse { 50% { opacity: 0.35; } }
+
 .side-foot {
   display: flex; align-items: center; gap: 4px;
   padding: 6px 8px 8px 16px; border-top: 1px solid var(--line);

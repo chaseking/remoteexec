@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let settings = AppSettings()
     lazy var backend = Backend(settings: settings)
     lazy var store = JobStore(backend: backend, settings: settings)
-    lazy var dashboard = DashboardController(backend: backend)
+    let updater = Updater()
+    lazy var dashboard = DashboardController(backend: backend, updater: updater)
 
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
@@ -65,7 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openBackendSettings: { [weak self] in self?.openBackendSettings() },
             quit: { NSApp.terminate(nil) }
         )
-        let hosting = NSHostingController(rootView: MenuView(store: store, backend: backend, actions: actions))
+        let hosting = NSHostingController(rootView: MenuView(store: store, backend: backend, updater: updater,
+                                                             actions: actions))
         hosting.sizingOptions = [.preferredContentSize]
         popover.contentViewController = hosting
         popover.behavior = .transient
@@ -76,6 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor [weak self] in self?.store.fast = false }
         }
 
+        updater.onChange = { [weak self] in self?.dashboard.pushUpdate() }
+        updater.start()
         dashboard.onClose = { [weak self] in self?.refreshActivationPolicy() }
         dashboard.onOpenBackendSettings = { [weak self] in self?.openBackendSettings() }
         store.$jobs

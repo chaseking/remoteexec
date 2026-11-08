@@ -53,6 +53,10 @@
       <div id="conn-error" class="side-warning hidden"></div>
       <div id="job-list" class="job-list"></div>
       <div class="side-foot">
+        <!-- shown by the macOS app when a newer version is upstream -->
+        <button id="update-btn" class="update-btn hidden">
+          <span class="ico" data-icon="download"></span><span id="update-label" class="update-label hidden"></span>
+        </button>
         <span id="updated" class="updated"></span>
         <span class="spacer"></span>
         <button id="settings-btn" class="icon-btn" title="Settings"><span class="ico" data-icon="gear"></span></button>
@@ -172,6 +176,12 @@
                 How the app starts <code>remoteexec gui</code> in the background. Leave the command empty
                 to find it automatically. <span id="app-log"></span>
               </p>
+              <div class="row-line" id="app-version-row">
+                <span class="label">Version</span>
+                <span id="app-version"></span>
+                <button id="app-check-update" class="btn">Check for updates</button>
+                <span id="app-update-result" class="muted small"></span>
+              </div>
             </div>
           </div>
         </div>

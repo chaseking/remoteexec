@@ -1289,6 +1289,49 @@ function initAppSettings() {
   send({ type: "getAppSettings" });
 }
 
+// ---------- updates (inside the macOS app only) ----------
+// The app checks its git checkout's upstream for a newer version and calls
+// remoteexecSetUpdate with the result; the purple button installs it.
+function initUpdates() {
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.remoteexec;
+  if (!window.remoteexecApp || !bridge) return;
+  const send = (msg) => bridge.postMessage(msg);
+  let info = {};
+  window.remoteexecSetUpdate = (u) => {
+    const was = info;
+    info = u || {};
+    const btn = $("#update-btn"), label = $("#update-label");
+    const busy = info.state === "installing";
+    const failed = info.state === "failed";
+    btn.classList.toggle("hidden", !info.available);
+    btn.classList.toggle("busy", busy);
+    btn.disabled = busy;
+    const text = busy ? info.message || "Updating…" : failed ? "Retry update" : "";
+    label.textContent = text;
+    label.classList.toggle("hidden", !text);
+    btn.title = failed ? info.message
+      : busy ? info.message
+      : `Update to ${info.available} (you have ${info.current}): install and relaunch`;
+    if (failed && was.state !== "failed") toast(info.message.split("\n")[0], 8000);
+
+    $("#app-version-row").classList.toggle("hidden", !info.current);
+    $("#app-version").textContent = info.current ? `remoteexec ${info.current}` : "";
+    $("#app-check-update").classList.toggle("hidden", !info.enabled);
+    $("#app-check-update").disabled = info.state === "checking" || busy;
+    $("#app-update-result").textContent = !info.enabled
+      ? "Updates are off: this copy wasn't built from a git checkout."
+      : info.state === "checking" ? "Checking…" : info.result || "";
+  };
+  $("#update-btn").addEventListener("click", () => {
+    if (!info.available || info.state === "installing") return;
+    if (!confirm(`Install remoteexec ${info.available} and relaunch? ` +
+                 "This pulls the latest code from git and rebuilds the app.")) return;
+    send({ type: "installUpdate" });
+  });
+  $("#app-check-update").addEventListener("click", () => send({ type: "checkUpdate" }));
+  send({ type: "getUpdate" });
+}
+
 // ---------- window dragging (inside the macOS app only) ----------
 // In the app the top bar sits where the titlebar is, and a native strip there
 // drags the window. Tell it where the bar's controls are so their clicks go
@@ -1369,6 +1412,7 @@ function init() {
   initSideResize();
   paintIcons();
   initAppearance();
+  initUpdates();
 
   $("#refresh-btn").addEventListener("click", () => { state.listSig = null; startListPolling(); });
   $("#settings-btn").addEventListener("click", openSettings);

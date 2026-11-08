@@ -7,6 +7,7 @@ import WebKit
 final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate,
                                  WKScriptMessageHandler {
     let backend: Backend
+    let updater: Updater
     var onClose: (() -> Void)?
     /// Opens the native backend settings (for when the page can't load).
     var onOpenBackendSettings: (() -> Void)?
@@ -16,8 +17,9 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     private var appearanceObservation: NSKeyValueObservation?
     private var currentPath = "/"
 
-    init(backend: Backend) {
+    init(backend: Backend, updater: Updater) {
         self.backend = backend
+        self.updater = updater
     }
 
     /// Show the window at `path`, e.g. "/", "/?job=123" or "/?view=settings".
@@ -26,6 +28,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         pushTheme()
+        Task { await updater.check() }  // throttled; the button shows if there's news
         currentPath = path
         Task {
             if await backend.ensureRunning() {
@@ -176,6 +179,15 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         case "backendSettings":
             onOpenBackendSettings?()
             return
+        case "installUpdate":
+            Task { await updater.install(reopenDashboard: true) }
+            return
+        case "checkUpdate":
+            Task { await updater.check(force: true) }
+            return
+        case "getUpdate":
+            pushUpdate()
+            return
         case "noDrag":
             let rects = body["rects"] as? [[Double]] ?? []
             dragView?.noDragRects = rects.filter { $0.count == 4 }
@@ -197,6 +209,26 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.remoteexecAppSettings && window.remoteexecAppSettings(\(json))",
+                                    completionHandler: nil)
+    }
+
+    /// Tells the page about updates: the sidebar's update button and the
+    /// version line in Settings.
+    func pushUpdate() {
+        let u = updater
+        var payload: [String: Any] = [
+            "enabled": u.repo != nil, "current": u.current, "available": u.available ?? "",
+            "result": u.lastResult, "log": u.logURL.path,
+        ]
+        switch u.state {
+        case .idle: payload["state"] = "idle"
+        case .checking: payload["state"] = "checking"
+        case let .installing(step): payload["state"] = "installing"; payload["message"] = step
+        case let .failed(why): payload["state"] = "failed"; payload["message"] = why
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("window.remoteexecSetUpdate && window.remoteexecSetUpdate(\(json))",
                                     completionHandler: nil)
     }
 
@@ -239,6 +271,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pushTheme()  // the look may have changed while the page loaded
+        pushUpdate()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,

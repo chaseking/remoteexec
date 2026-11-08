@@ -13,6 +13,7 @@ struct MenuActions {
 struct MenuView: View {
     @ObservedObject var store: JobStore
     @ObservedObject var backend: Backend
+    @ObservedObject var updater: Updater
     let actions: MenuActions
 
     var body: some View {
@@ -102,6 +103,9 @@ struct MenuView: View {
 
     private var footer: some View {
         HStack(spacing: 14) {
+            if updater.available != nil {
+                UpdateButton(updater: updater)
+            }
             Button("Open Dashboard", action: actions.openDashboard)
             Spacer()
             if let updated = store.lastUpdate {
@@ -344,5 +348,55 @@ struct BackendErrorView: View {
             }
         }
         .padding(14)
+    }
+}
+
+/// The purple "update available" button (the app icon's colours): installs
+/// the update and relaunches.
+struct UpdateButton: View {
+    @ObservedObject var updater: Updater
+
+    static let top = Color(red: 104 / 255, green: 66 / 255, blue: 168 / 255)
+    static let bottom = Color(red: 60 / 255, green: 32 / 255, blue: 110 / 255)
+
+    private var installing: Bool {
+        if case .installing = updater.state { return true }
+        return false
+    }
+
+    var body: some View {
+        Button {
+            Task { await updater.install(reopenDashboard: false) }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(LinearGradient(colors: [Self.top, Self.bottom], startPoint: .top, endPoint: .bottom))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(installing)
+        .help(help)
+    }
+
+    private var label: String {
+        switch updater.state {
+        case let .installing(step): return step
+        case .failed: return "Retry update"
+        default: return "Update"
+        }
+    }
+
+    private var help: String {
+        if case let .failed(why) = updater.state { return why }
+        return "Install remoteexec \(updater.available ?? "") (you have \(updater.current)) and relaunch"
     }
 }

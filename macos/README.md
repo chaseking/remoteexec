@@ -43,6 +43,19 @@ start the CLI (empty = find it automatically), and the port. If the backend can'
 all, the dropdown offers a small *Backend settings* window instead. Backend output goes to
 `~/Library/Logs/remoteexec-menubar.log`.
 
+## Updates
+
+`build.sh` stamps the app with the version in `pyproject.toml` and the path of the checkout
+it was built from. Every few hours (and when the jobs window opens) the app fetches that
+checkout's upstream branch and compares versions; when upstream's is higher, a purple
+download button appears in the lower left of the jobs window and the dropdown. Clicking it
+runs `git pull --ff-only`, rebuilds with `build.sh`, reinstalls the CLI if it isn't an
+editable install of the checkout, then replaces the app and relaunches it. Settings → Menu
+bar app shows the version and has *Check for updates*. The log is
+`~/Library/Logs/remoteexec-update.log`.
+
+To ship an update, bump `version` in `pyproject.toml` (and `remoteexec/serialize.py`) and push.
+
 ## Icon
 
 The app icon is `AppIcon.icns`, drawn by `make_icon.py` (edit the colours/glyph there and

@@ -16,6 +16,13 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/RemoteExec"
 cp Info.plist "$APP/Contents/Info.plist"
+# Stamp the version (pyproject.toml's) and this checkout's path: the app checks
+# the checkout's upstream for a newer version and offers to update itself.
+REPO="$(cd .. && pwd)"
+VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$REPO/pyproject.toml" | head -1)"
+plutil -replace CFBundleShortVersionString -string "${VERSION:-0}" "$APP/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$(git -C "$REPO" rev-list --count HEAD 2>/dev/null || echo 1)" "$APP/Contents/Info.plist"
+plutil -replace RXSourceDir -string "$REPO" "$APP/Contents/Info.plist"
 cp AppIcon.icns "$APP/Contents/Resources/"   # regenerate/replace: see make_icon.py
 codesign --force --deep --sign - "$APP"   # ad-hoc signature (required on Apple Silicon)
 
