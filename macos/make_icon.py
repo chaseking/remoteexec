@@ -1,4 +1,4 @@
-"""Draw the app icon (terracotta rounded square, white >_ prompt) into AppIcon.icns.
+"""Draw the app icon (dark purple rounded square, white >_ prompt) into AppIcon.icns.
 
     uv run --with pillow python make_icon.py AppIcon.icns
 
@@ -21,7 +21,7 @@ ImageDraw.Draw(shadow).rounded_rectangle((box[0], box[1] + 12 * 4, box[2], box[3
 img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(14 * 4)))
 
 # vertical gradient body
-top, bottom = (226, 128, 92), (194, 86, 54)
+top, bottom = (104, 66, 168), (60, 32, 110)
 grad = Image.new("RGBA", (S, S))
 gd = ImageDraw.Draw(grad)
 for y in range(S):

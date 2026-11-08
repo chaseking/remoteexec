@@ -247,18 +247,42 @@ function toggleMenu(menu, e) {
 
 // ---------- appearance ----------
 // Settings → Appearance: "system" (the default), "light" or "dark". In the
-// macOS app the window itself takes the choice and the page follows it through
-// prefers-color-scheme; in a browser the choice is kept here.
+// macOS app the window itself takes the choice and tells the page its look
+// (remoteexecApp.theme, updated through remoteexecSetTheme whenever it
+// changes); in a browser the choice is kept here and "system" follows
+// prefers-color-scheme.
 const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
+function wantDark() {
+  const app = window.remoteexecApp;
+  if (app && (app.theme === "dark" || app.theme === "light")) return app.theme === "dark";
+  const pick = app ? "system" : stored("rxappearance", "system");
+  return pick === "dark" || (pick === "system" && !!darkQuery && darkQuery.matches);
+}
 function applyTheme() {
-  const pick = window.remoteexecApp ? "system" : stored("rxappearance", "system");
-  const dark = pick === "dark" || (pick === "system" && !!darkQuery && darkQuery.matches);
-  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  const theme = wantDark() ? "dark" : "light";
+  const root = document.documentElement;
+  if (root.getAttribute("data-theme") === theme) return;
+  root.setAttribute("data-theme", theme);
+  // Make WebKit restyle and repaint everything now, even if the switch came
+  // while the page was hidden, so no element keeps the old colours.
+  root.style.colorScheme = theme;
+  void root.offsetHeight;
 }
 function initTheme() {
+  window.remoteexecSetTheme = (theme) => {
+    if (window.remoteexecApp) window.remoteexecApp.theme = theme;
+    applyTheme();
+  };
   applyTheme();
-  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", applyTheme);
+  if (darkQuery) {
+    if (darkQuery.addEventListener) darkQuery.addEventListener("change", applyTheme);
+    else if (darkQuery.addListener) darkQuery.addListener(applyTheme);
+  }
+  // A change event can be missed while the page is hidden; check on return.
+  document.addEventListener("visibilitychange", applyTheme);
+  window.addEventListener("focus", applyTheme);
+  window.addEventListener("pageshow", applyTheme);
 }
 
 // A System / Light / Dark segmented control.

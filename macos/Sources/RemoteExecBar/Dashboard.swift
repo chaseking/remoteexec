@@ -13,6 +13,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var dragView: TitlebarDragView?
+    private var appearanceObservation: NSKeyValueObservation?
     private var currentPath = "/"
 
     init(backend: Backend) {
@@ -24,6 +25,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         if window == nil { build() }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        pushTheme()
         currentPath = path
         Task {
             if await backend.ensureRunning() {
@@ -67,8 +69,12 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         config.websiteDataStore = .default()  // keeps the web UI's own choices (e.g. the finished window)
         // Tells the page it runs under the titlebar and how tall that is, so it
         // keeps the strip free of controls.
+        // The page is also told the window's light/dark look outright, rather
+        // than left to notice prefers-color-scheme changing: a web view that is
+        // hidden or in the background when the system switches can miss that,
+        // and come back half switched (dark backgrounds, dark text).
         config.userContentController.addUserScript(WKUserScript(
-            source: "window.remoteexecApp = {topInset: \(Int(titlebar))};",
+            source: "window.remoteexecApp = {topInset: \(Int(titlebar)), theme: '\(Self.theme(of: w))'};",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // The Settings page reads and changes the app's own settings through this.
         config.userContentController.add(self, name: "remoteexec")
@@ -99,6 +105,24 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         window = w
         webView = web
         dragView = drag
+        // Follows the system switching (Auto) and the Settings choice alike.
+        appearanceObservation = w.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in self?.pushTheme() }
+        }
+    }
+
+    private static func theme(of window: NSWindow) -> String {
+        window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light"
+    }
+
+    /// Tells the page which look the window has now.
+    private func pushTheme() {
+        guard let w = window, let web = webView else { return }
+        let theme = Self.theme(of: w)
+        web.evaluateJavaScript(
+            "window.remoteexecApp && (window.remoteexecApp.theme = '\(theme)');"
+                + "window.remoteexecSetTheme && window.remoteexecSetTheme('\(theme)');",
+            completionHandler: nil)
     }
 
     private func showError(_ message: String) {
@@ -138,6 +162,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
             if let pick = (body["windowAppearance"] as? String).flatMap(Appearance.init(rawValue:)) {
                 settings.windowAppearance = pick
                 window?.appearance = pick.nsAppearance
+                pushTheme()
             }
             if let pick = (body["menuAppearance"] as? String).flatMap(Appearance.init(rawValue:)) {
                 settings.menuAppearance = pick
@@ -181,6 +206,10 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         onClose?()
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        pushTheme()  // in case a switch happened while the window was away
+    }
+
     // MARK: WKUIDelegate (the web UI uses confirm() and target=_blank links)
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
@@ -207,6 +236,10 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     }
 
     // MARK: WKNavigationDelegate
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pushTheme()  // the look may have changed while the page loaded
+    }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
