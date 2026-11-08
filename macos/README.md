@@ -46,7 +46,8 @@ all, the dropdown offers a small *Backend settings* window instead. Backend outp
 ## Updates
 
 `build.sh` stamps the app with the version in `pyproject.toml` and the path of the checkout
-it was built from. Every few hours (and when the jobs window opens) the app fetches that
+it was built from. Every 30 minutes by default (Settings → Menu bar app → *Auto-check*: 15 minutes
+to once a day, or only at launch), at launch, and when the jobs window opens, the app fetches that
 checkout's upstream branch and compares versions; when upstream's is higher, a purple
 download button appears in the lower left of the jobs window and the dropdown. Clicking it
 runs `git pull --ff-only`, rebuilds with `build.sh`, reinstalls the CLI if it isn't an

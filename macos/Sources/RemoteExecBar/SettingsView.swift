@@ -33,6 +33,10 @@ final class AppSettings: ObservableObject {
     @Published var menuAppearance: Appearance {
         didSet { UserDefaults.standard.set(menuAppearance.rawValue, forKey: "menuAppearance") }
     }
+    /// Minutes between update checks; 0 = never check on a schedule.
+    @Published var updateCheckMinutes: Int {
+        didSet { UserDefaults.standard.set(updateCheckMinutes, forKey: "updateCheckMinutes") }
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -42,6 +46,7 @@ final class AppSettings: ObservableObject {
         notify = d.object(forKey: "notify") as? Bool ?? true
         windowAppearance = Appearance(rawValue: d.string(forKey: "windowAppearance") ?? "") ?? .system
         menuAppearance = Appearance(rawValue: d.string(forKey: "menuAppearance") ?? "") ?? .system
+        updateCheckMinutes = d.object(forKey: "updateCheckMinutes") as? Int ?? 30
     }
 }
 

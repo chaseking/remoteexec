@@ -1273,6 +1273,11 @@ function initAppSettings() {
     $("#app-command").placeholder = s.detected ? `auto: ${s.detected}` : "auto-detect";
     if (document.activeElement !== $("#app-port")) $("#app-port").value = s.port;
     $("#app-log").textContent = s.log ? `Its output goes to ${s.log}.` : "";
+    const every = $("#app-update-every"), mins = String(s.updateCheckMinutes ?? 30);
+    if (![...every.options].some((o) => o.value === mins)) {
+      every.appendChild(el("option", null, `every ${mins} minutes`)).value = mins;  // set by hand
+    }
+    every.value = mins;
   };
   onChoice("appearance-window", (v) => send({ type: "setAppSettings", windowAppearance: v }));
   onChoice("appearance-menu", (v) => send({ type: "setAppSettings", menuAppearance: v }));
@@ -1282,6 +1287,8 @@ function initAppSettings() {
     const port = parseInt(e.target.value, 10);
     if (port > 0 && port < 65536) send({ type: "setAppSettings", port });
   });
+  $("#app-update-every").addEventListener("change", (e) =>
+    send({ type: "setAppSettings", updateCheckMinutes: parseInt(e.target.value, 10) }));
   $("#app-restart").addEventListener("click", () => {
     toast("Restarting the backend…", 4000);
     send({ type: "restartBackend" });
@@ -1317,6 +1324,7 @@ function initUpdates() {
     $("#app-version-row").classList.toggle("hidden", !info.current);
     $("#app-version").textContent = info.current ? `remoteexec ${info.current}` : "";
     $("#app-check-update").classList.toggle("hidden", !info.enabled);
+    $("#app-update-every-row").classList.toggle("hidden", !info.enabled);
     $("#app-check-update").disabled = info.state === "checking" || busy;
     $("#app-update-result").textContent = !info.enabled
       ? "Updates are off: this copy wasn't built from a git checkout."

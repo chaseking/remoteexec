@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         updater.onChange = { [weak self] in self?.dashboard.pushUpdate() }
-        updater.start()
+        updater.start(minutes: settings.updateCheckMinutes)
         dashboard.onClose = { [weak self] in self?.refreshActivationPolicy() }
         dashboard.onOpenBackendSettings = { [weak self] in self?.openBackendSettings() }
         store.$jobs

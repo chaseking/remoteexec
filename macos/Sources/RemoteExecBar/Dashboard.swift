@@ -170,6 +170,10 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
             if let pick = (body["menuAppearance"] as? String).flatMap(Appearance.init(rawValue:)) {
                 settings.menuAppearance = pick
             }
+            if let minutes = body["updateCheckMinutes"] as? Int, minutes >= 0 {
+                settings.updateCheckMinutes = minutes
+                updater.schedule(minutes: minutes)
+            }
         case "restartBackend":
             Task {
                 await backend.restart()
@@ -204,6 +208,7 @@ final class DashboardController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         let payload: [String: Any] = [
             "notify": s.notify, "backendCommand": s.backendCommand, "port": s.port,
             "windowAppearance": s.windowAppearance.rawValue, "menuAppearance": s.menuAppearance.rawValue,
+            "updateCheckMinutes": s.updateCheckMinutes,
             "detected": Backend.detectCommand() ?? "", "log": backend.logURL.path,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),

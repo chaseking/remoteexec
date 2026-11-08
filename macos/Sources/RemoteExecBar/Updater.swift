@@ -42,26 +42,39 @@ final class Updater: ObservableObject {
             .appendingPathComponent("Library/Logs/remoteexec-update.log")
     }
 
-    /// Check shortly after launch, then every four hours.
-    func start() {
-        guard repo != nil, timer == nil else { return }
+    /// Check shortly after launch, then every `minutes` (Settings → Menu bar
+    /// app; 0 = only at launch, when the jobs window opens, or on request).
+    func start(minutes: Int) {
+        guard repo != nil else { return }
         Task {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             await check()
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 4 * 3600, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.check() }
-        }
+        schedule(minutes: minutes)
     }
 
-    /// Fetch upstream and compare versions. Without `force`, at most every 20 min.
+    /// (Re)starts the periodic check; called again when the setting changes.
+    func schedule(minutes: Int) {
+        timer?.invalidate()
+        timer = nil
+        guard repo != nil, minutes > 0 else { return }
+        let t = Timer(timeInterval: TimeInterval(minutes) * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.check(force: true) }
+        }
+        t.tolerance = min(60, TimeInterval(minutes) * 6)  // lets macOS batch wake-ups
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    /// Fetch upstream and compare versions. Without `force` (the jobs window
+    /// opening), at most every 5 min.
     func check(force: Bool = false) async {
         guard let repo else { return }
         switch state {
         case .checking, .installing: return
         default: break
         }
-        if !force, let last = lastCheck, Date().timeIntervalSince(last) < 20 * 60 { return }
+        if !force, let last = lastCheck, Date().timeIntervalSince(last) < 5 * 60 { return }
         lastCheck = Date()
         state = .checking
         changed()
