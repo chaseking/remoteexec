@@ -304,6 +304,55 @@ function initAppearance() {
   onChoice("appearance-window", (v) => { store("rxappearance", v); applyTheme(); });
 }
 
+// ---------- sidebar width ----------
+// Drag the sidebar's right border to resize it (double-click resets); the
+// width is remembered. The top bar's sidebar half follows via --side-w.
+const SIDE_DEFAULT = 300, SIDE_MIN = 240, SIDE_MAX = 600;
+
+function clampSide(w) {
+  // Leave the main pane at least 360px.
+  const max = Math.max(SIDE_MIN, Math.min(SIDE_MAX, window.innerWidth - 360));
+  return Math.round(Math.min(max, Math.max(SIDE_MIN, w)));
+}
+function setSideWidth(w) {
+  document.documentElement.style.setProperty("--side-w", `${clampSide(w)}px`);
+}
+function initSideResize() {
+  let want = parseInt(stored("rxsidewidth", ""), 10) || SIDE_DEFAULT;
+  setSideWidth(want);
+  window.addEventListener("resize", () => setSideWidth(want));  // re-clamp, keep the choice
+  const grip = $("#side-resizer");
+  const body = $(".body");
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("dragging");
+    document.body.classList.add("resizing-side");
+    const left = body.getBoundingClientRect().left;
+    const move = (ev) => {
+      want = clampSide(ev.clientX - left);
+      setSideWidth(want);
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      grip.classList.remove("dragging");
+      document.body.classList.remove("resizing-side");
+      store("rxsidewidth", String(want));
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+  grip.addEventListener("dblclick", () => {
+    want = SIDE_DEFAULT;
+    setSideWidth(want);
+    store("rxsidewidth", String(want));
+  });
+}
+
 // ---------- sidebar ----------
 async function loadJobs() {
   // Never let two list fetches overlap, but don't drop the second one either:
@@ -1267,7 +1316,9 @@ function watchTopbar() {
     queued = true;
     requestAnimationFrame(() => { queued = false; reportNoDrag(); });
   };
-  new ResizeObserver(later).observe($("#topbar"));
+  const sizes = new ResizeObserver(later);
+  sizes.observe($("#topbar"));
+  sizes.observe($("#topbar .bar-side"));  // moves the controls when the sidebar is resized
   new MutationObserver(later).observe($("#topbar"),
     { subtree: true, childList: true, attributes: true, characterData: true });
   window.addEventListener("resize", later);
@@ -1315,6 +1366,7 @@ function init() {
     }
   }
   initTheme();
+  initSideResize();
   paintIcons();
   initAppearance();
 
