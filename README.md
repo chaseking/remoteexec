@@ -169,6 +169,18 @@ pytest tests/test_axon_countdown.py -s     # real axon; skips if unreachable
 The offline suite runs the real submission path end to end against a fake Slurm
 (`tests/fakeslurm.py`) with ssh/rsync replaced by a local shell.
 
+## Versioning
+
+Versions are `release.major.minor` (e.g. `0.3.0`: release 0, major 3, minor 0). The version
+lives in two places that must match: `version` in `pyproject.toml` and `__version__` in
+`remoteexec/serialize.py` (`uv.lock` echoes it too).
+
+**For agents and contributors:** unless told otherwise, every change you make bumps the
+minor version (`0.3.0` → `0.3.1`). Bump major only for a significant new feature set or a
+breaking change, and release only when asked; either resets the parts after it to 0.
+Bumping matters: the macOS app only offers an update when the pushed version is higher
+than the installed one (see `macos/README.md` → Updates).
+
 ## Changes in 0.3
 
 New: `remoteexec run` / `cluster.run` for shell commands; per-job `output_dir()` with

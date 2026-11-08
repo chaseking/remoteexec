@@ -54,7 +54,7 @@ editable install of the checkout, then replaces the app and relaunches it. Setti
 bar app shows the version and has *Check for updates*. The log is
 `~/Library/Logs/remoteexec-update.log`.
 
-To ship an update, bump `version` in `pyproject.toml` (and `remoteexec/serialize.py`) and push.
+To ship an update, bump the version (see Versioning in the main README) and push.
 
 ## Icon
 

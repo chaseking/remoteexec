@@ -1,6 +1,6 @@
 [project]
 name = "remoteexec"
-version = "0.3.0"
+version = "0.3.1"
 description = "Edit code locally, run it on a remote Slurm cluster."
 readme = "README.md"
 requires-python = ">=3.10"
