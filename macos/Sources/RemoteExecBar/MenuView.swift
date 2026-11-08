@@ -388,6 +388,6 @@ struct UpdateButton: View {
         case let .failed(why): return "Update failed, click to retry. \(why)"
         default: break
         }
-        return "Install remoteexec \(updater.available ?? "") (you have \(updater.current)) and relaunch"
+        return "New update available"
     }
 }

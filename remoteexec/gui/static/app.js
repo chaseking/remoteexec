@@ -1311,7 +1311,7 @@ function initUpdates() {
     label.classList.toggle("hidden", !text);
     btn.title = failed ? info.message
       : busy ? info.message
-      : `Update to ${info.available} (you have ${info.current}): install and relaunch`;
+      : "New update available";
     if (failed && was.state !== "failed") toast(info.message.split("\n")[0], 8000);
 
     $("#app-version-row").classList.toggle("hidden", !info.current);
@@ -1324,9 +1324,7 @@ function initUpdates() {
   };
   $("#update-btn").addEventListener("click", () => {
     if (!info.available || info.state === "installing") return;
-    if (!confirm(`Install remoteexec ${info.available} and relaunch? ` +
-                 "This pulls the latest code from git and rebuilds the app.")) return;
-    send({ type: "installUpdate" });
+    send({ type: "installUpdate" });  // no confirmation: the click is the request
   });
   $("#app-check-update").addEventListener("click", () => send({ type: "checkUpdate" }));
   send({ type: "getUpdate" });
