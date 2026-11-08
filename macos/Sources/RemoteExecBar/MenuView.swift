@@ -365,38 +365,29 @@ struct UpdateButton: View {
     }
 
     var body: some View {
+        // Just the icon, sized like the footer's text, so the footer keeps its
+        // height and layout; the tooltip carries the details and progress.
         Button {
             Task { await updater.install(reopenDashboard: false) }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(label)
-                    .font(.system(size: 11.5, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(LinearGradient(colors: [Self.top, Self.bottom], startPoint: .top, endPoint: .bottom))
-            )
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(LinearGradient(colors: [Self.top, Self.bottom],
+                                                startPoint: .top, endPoint: .bottom))
+                .opacity(installing ? 0.45 : 1)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .disabled(installing)
         .help(help)
-    }
-
-    private var label: String {
-        switch updater.state {
-        case let .installing(step): return step
-        case .failed: return "Retry update"
-        default: return "Update"
-        }
+        .accessibilityLabel(installing ? "Updating" : "Install update")
     }
 
     private var help: String {
-        if case let .failed(why) = updater.state { return why }
+        switch updater.state {
+        case let .installing(step): return step
+        case let .failed(why): return "Update failed, click to retry. \(why)"
+        default: break
+        }
         return "Install remoteexec \(updater.available ?? "") (you have \(updater.current)) and relaunch"
     }
 }
