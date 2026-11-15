@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .errors import RemoteExecutionError
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 
 def pack_payload(fn, args, kwargs) -> bytes:

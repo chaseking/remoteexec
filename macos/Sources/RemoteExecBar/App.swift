@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let popover = NSPopover()
     private var settingsWindow: NSWindow?
     private var popoverCloseObserver: Any?
+    private var resignObserver: Any?
+    private var globalClickMonitor: Any?
+    private var localClickMonitor: Any?
     private var subscriptions = Set<AnyCancellable>()
 
     /// Menu bar icon (SF Symbols). Change these to restyle the app.
@@ -70,12 +73,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                              actions: actions))
         hosting.sizingOptions = [.preferredContentSize]
         popover.contentViewController = hosting
-        popover.behavior = .transient
+        // `.transient` dismisses on the mouse-down of a click on the status item, so
+        // the button's action then sees a closed popover and reopens it. Dismissal is
+        // handled by hand instead (see `startDismissMonitors`) so a second click on
+        // the icon toggles it shut.
+        popover.behavior = .applicationDefined
         popover.animates = false
         popoverCloseObserver = NotificationCenter.default.addObserver(
             forName: NSPopover.didCloseNotification, object: popover, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.store.fast = false }
+            Task { @MainActor [weak self] in
+                self?.store.fast = false
+                self?.stopDismissMonitors()
+            }
         }
 
         updater.onChange = { [weak self] in self?.dashboard.pushUpdate() }
@@ -115,6 +125,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
         popover.contentViewController?.view.window?.makeKey()
+        startDismissMonitors()
+    }
+
+    /// Close the dropdown on any click outside it (other apps, other menu bar items,
+    /// our own windows), when the app is deactivated, or on Escape. A click on our
+    /// own status item is left to `togglePopover`, which closes it.
+    private func startDismissMonitors() {
+        stopDismissMonitors()
+        let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: clicks) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.popover.performClose(nil) }
+        }
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: clicks.union(.keyDown)) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 {  // Escape
+                    self.popover.performClose(nil)
+                    return nil
+                }
+                return event
+            }
+            let popoverWindow = self.popover.contentViewController?.view.window
+            if let window = event.window, window === popoverWindow || window === self.statusItem?.button?.window {
+                return event
+            }
+            self.popover.performClose(nil)
+            return event
+        }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.popover.performClose(nil) }
+        }
+    }
+
+    private func stopDismissMonitors() {
+        if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
+        if let m = localClickMonitor { NSEvent.removeMonitor(m) }
+        if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
+        globalClickMonitor = nil
+        localClickMonitor = nil
+        resignObserver = nil
     }
 
     private func updateStatusItem(_ jobs: [JobRow]) {
