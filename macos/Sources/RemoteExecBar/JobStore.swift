@@ -30,12 +30,13 @@ final class JobStore: ObservableObject {
         self.settings = settings
     }
 
-    var active: [JobRow] { jobs.filter { $0.isActive } }
+    /// Running/queued jobs and finished ones (newest first), worked out once per poll, off
+    /// the main thread, rather than on every redraw: with a few hundred finished jobs,
+    /// re-sorting them (parsing two dates per comparison) on each redraw blocked the main
+    /// thread, and with it every click, for over a second.
+    private(set) var active: [JobRow] = []
+    private(set) var finished: [JobRow] = []
 
-    var finished: [JobRow] {
-        jobs.filter { !$0.isActive }
-            .sorted { ($0.endDate ?? .distantPast) > ($1.endDate ?? .distantPast) }
-    }
 
     func startPolling() {
         pollTask?.cancel()
@@ -64,7 +65,20 @@ final class JobStore: ObservableObject {
             let response: JobsResponse = try await backend.get("/api/jobs?filters=running,finished_6h")
             notifyFinished(response.jobs, since: lastPoll)
             lastPoll = Date()
-            if jobs != response.jobs { jobs = response.jobs }
+            if jobs != response.jobs {
+                // Split and sort off the main thread, so clicks never wait on it.
+                let rows = response.jobs
+                let (running, ended) = await Task.detached(priority: .userInitiated) {
+                    (rows.filter { $0.isActive },
+                     rows.filter { !$0.isActive }
+                        .map { ($0, $0.endDate ?? .distantPast) }
+                        .sorted { $0.1 > $1.1 }
+                        .map(\.0))
+                }.value
+                active = running
+                finished = ended
+                jobs = rows  // publishes after `active` and `finished` are set
+            }
             let errors = response.errors ?? [:]
             if hostErrors != errors { hostErrors = errors }
             if error != nil { error = nil }

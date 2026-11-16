@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MenuActions {
@@ -68,7 +69,8 @@ struct MenuView: View {
     }
 
     private var jobList: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        // Lazy: only the rows scrolled into view are built (there can be hundreds).
+        LazyVStack(alignment: .leading, spacing: 1) {
             ForEach(store.hostErrors.keys.sorted(), id: \.self) { host in
                 HostErrorRow(host: host, message: store.hostErrors[host] ?? "", openHosts: actions.openHosts)
             }
@@ -186,32 +188,16 @@ struct JobRowView: View {
     }
 }
 
-final class PulseState: ObservableObject {
-    @Published var dim = false
-}
-
 struct StatusIcon: View {
     let phase: JobPhase
-    // Not a TimelineView: that re-runs the body every frame on the main thread,
-    // which the jobs window shares. One repeating animation is set up once.
-    @StateObject private var pulse = PulseState()
 
     var body: some View {
-        icon
-            .opacity(phase == .running && pulse.dim ? 0.35 : 1)
-            .onAppear {
-                guard phase == .running, !pulse.dim else { return }
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                    pulse.dim = true
-                }
-            }
-    }
-
-    private var icon: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(color)
-            .frame(width: 16)
+        // Drawn by AppKit, with the running pulse as a Core Animation animation that
+        // the window server plays. A SwiftUI animation (`repeatForever`, TimelineView)
+        // re-lays out the whole dropdown on the main thread every frame: 60-80% CPU
+        // while a job runs, and clicks wait behind it.
+        SymbolImage(symbol: symbol, color: color, pulse: phase == .running)
+            .frame(width: 16, height: 16)
     }
 
     private var symbol: String {
@@ -225,14 +211,64 @@ struct StatusIcon: View {
         }
     }
 
-    private var color: Color {
+    private var color: NSColor {
         switch phase {
-        case .running: return .orange
-        case .queued: return .blue
-        case .completed: return .green
-        case .failed: return .red
-        case .stopped, .unknown: return .secondary
+        case .running: return .systemOrange
+        case .queued: return .systemBlue
+        case .completed: return .systemGreen
+        case .failed: return .systemRed
+        case .stopped, .unknown: return .secondaryLabelColor
         }
+    }
+}
+
+struct SymbolImage: NSViewRepresentable {
+    let symbol: String
+    let color: NSColor
+    let pulse: Bool
+
+    func makeNSView(context: Context) -> PulsingImageView {
+        let view = PulsingImageView()
+        view.imageScaling = .scaleNone
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        updateNSView(view, context: context)
+        return view
+    }
+
+    func updateNSView(_ view: PulsingImageView, context: Context) {
+        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        view.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        view.contentTintColor = color
+        view.pulse = pulse
+    }
+}
+
+final class PulsingImageView: NSImageView {
+    var pulse = false {
+        didSet { if pulse != oldValue { applyPulse() } }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyPulse()  // a layer can be rebuilt when the view changes window
+    }
+
+    private func applyPulse() {
+        wantsLayer = true
+        guard let layer else { return }
+        layer.removeAnimation(forKey: "pulse")
+        guard pulse else { return }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 1
+        animation.toValue = 0.35
+        animation.duration = 0.9
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.isRemovedOnCompletion = false
+        layer.add(animation, forKey: "pulse")
     }
 }
 

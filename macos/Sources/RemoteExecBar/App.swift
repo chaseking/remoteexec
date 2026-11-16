@@ -36,12 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     lazy var dashboard = DashboardController(backend: backend, updater: updater)
 
     private var statusItem: NSStatusItem?
-    private let popover = NSPopover()
+    private var dropdown: DropdownPanel?
     private var settingsWindow: NSWindow?
-    private var popoverCloseObserver: Any?
-    private var resignObserver: Any?
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
+    private var statusClickMonitor: Any?
+    /// The menu bar runs the dropdown's lifecycle (macOS 27; see `useExpandedInterface`).
+    private var usesExpandedInterface = false
     private var subscriptions = Set<AnyCancellable>()
 
     /// Menu bar icon (SF Symbols). Change these to restyle the app.
@@ -56,10 +57,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.image = Self.statusImage(busy: false)
             button.imagePosition = .imageLeading
             button.toolTip = "remoteexec"
-            button.target = self
-            button.action = #selector(togglePopover(_:))
         }
         statusItem = item
+        usesExpandedInterface = Self.useExpandedInterface(item, delegate: self)
+        if !usesExpandedInterface {
+            // Before macOS 27: open and close the dropdown by hand. Mouse clicks on the
+            // icon are taken here, on the press (as system menus open), before the
+            // button sees them: its own click handling clears the highlight when the
+            // mouse is released, and the icon should stay highlighted while open.
+            item.button?.target = self
+            item.button?.action = #selector(toggleDropdown(_:))  // VoiceOver and keyboard
+            statusClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, let window = self.statusItem?.button?.window, event.window === window else { return event }
+                self.toggleDropdown(nil)
+                return nil
+            }
+        }
 
         let actions = MenuActions(
             openJob: { [weak self] id in self?.openDashboard(path: "/?job=\(id)") },
@@ -69,24 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openBackendSettings: { [weak self] in self?.openBackendSettings() },
             quit: { NSApp.terminate(nil) }
         )
-        let hosting = NSHostingController(rootView: MenuView(store: store, backend: backend, updater: updater,
-                                                             actions: actions))
-        hosting.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = hosting
-        // `.transient` dismisses on the mouse-down of a click on the status item, so
-        // the button's action then sees a closed popover and reopens it. Dismissal is
-        // handled by hand instead (see `startDismissMonitors`) so a second click on
-        // the icon toggles it shut.
-        popover.behavior = .applicationDefined
-        popover.animates = false
-        popoverCloseObserver = NotificationCenter.default.addObserver(
-            forName: NSPopover.didCloseNotification, object: popover, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.store.fast = false
-                self?.stopDismissMonitors()
-            }
-        }
+        let panel = DropdownPanel(rootView: MenuView(store: store, backend: backend, updater: updater,
+                                                     actions: actions))
+        dropdown = panel
 
         updater.onChange = { [weak self] in self?.dashboard.pushUpdate() }
         updater.start(minutes: settings.updateCheckMinutes)
@@ -113,60 +111,119 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: status item + dropdown
 
-    @objc private func togglePopover(_ sender: Any?) {
-        guard let button = statusItem?.button else { return }
-        if popover.isShown {
-            popover.performClose(sender)
-            return
+    /// On macOS 27 and later the menu bar runs the dropdown's lifecycle: a click on the
+    /// icon opens it through `NSStatusItemExpandedInterfaceDelegate` (`showDropdown`), and
+    /// the menu bar highlights the icon while it is open. Closing it is up to the app
+    /// (`closeDropdown` cancels the session; the menu bar then calls `hideDropdown`),
+    /// including on a second click on the icon, which reaches only the global monitor.
+    private static func useExpandedInterface(_ item: NSStatusItem, delegate: AppDelegate) -> Bool {
+        #if compiler(>=6.4)  // a toolchain with the macOS 27 SDK
+        if #available(macOS 27.0, *) {
+            item.expandedInterfaceDelegate = delegate
+            return true
         }
-        store.fast = true
-        Task { await store.refresh() }
-        popover.appearance = settings.menuAppearance.nsAppearance
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        NSApp.activate(ignoringOtherApps: true)
-        popover.contentViewController?.view.window?.makeKey()
-        startDismissMonitors()
+        #endif
+        return false
     }
 
-    /// Close the dropdown on any click outside it (other apps, other menu bar items,
-    /// our own windows), when the app is deactivated, or on Escape. A click on our
-    /// own status item is left to `togglePopover`, which closes it.
+    /// The icon was clicked (before macOS 27; see `useExpandedInterface`).
+    @objc private func toggleDropdown(_ sender: Any?) {
+        guard let dropdown else { return }
+        if dropdown.isVisible {
+            closeDropdown()
+        } else {
+            showDropdown()
+            statusItem?.button?.highlight(true)
+        }
+    }
+
+    private func showDropdown() {
+        guard let button = statusItem?.button, let dropdown, !dropdown.isVisible else { return }
+        // Show first, with whatever was last loaded; fresh data fills in when it arrives.
+        // The app is not activated (see DropdownPanel), so the app in front keeps focus.
+        dropdown.appearance = settings.menuAppearance.nsAppearance
+        dropdown.show(below: button)
+        startDismissMonitors()
+        store.fast = true
+        Task { await store.refresh() }
+    }
+
+    /// Close the dropdown from our side (a click elsewhere, Escape, opening a window).
+    private func closeDropdown() {
+        #if compiler(>=6.4)
+        if #available(macOS 27.0, *), let session = statusItem?.expandedInterfaceSession {
+            session.cancel()  // the menu bar then calls `hideDropdown`
+            return
+        }
+        #endif
+        hideDropdown()
+    }
+
+    private func hideDropdown() {
+        guard let dropdown, dropdown.isVisible else { return }
+        dropdown.orderOut(nil)
+        store.fast = false
+        stopDismissMonitors()
+        statusItem?.button?.highlight(false)
+    }
+
+    /// Close the dropdown on a click anywhere outside it: in other apps or other menu
+    /// bar items (a global monitor: those clicks never reach this app), or in our own
+    /// windows. A click on our own status item is left to the menu bar / `toggleDropdown`.
     private func startDismissMonitors() {
         stopDismissMonitors()
         let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: clicks) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.popover.performClose(nil) }
+            let location = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // A click on our own icon: before macOS 27 the icon handles it too (see
+                // `isOnStatusItem`). With the menu bar running the dropdown (macOS 27), the
+                // icon gets no click while the dropdown is open and the menu bar doesn't
+                // close it either, so close it here.
+                if !self.usesExpandedInterface, self.isOnStatusItem(location) { return }
+                self.closeDropdown()
+            }
         }
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: clicks.union(.keyDown)) { [weak self] event in
-            guard let self, self.popover.isShown else { return event }
+            guard let self, let dropdown = self.dropdown, dropdown.isVisible else { return event }
             if event.type == .keyDown {
+                // Only seen while the app is active (e.g. the jobs window is open); the
+                // dropdown never takes the keyboard from the app in front.
                 if event.keyCode == 53 {  // Escape
-                    self.popover.performClose(nil)
+                    self.closeDropdown()
                     return nil
                 }
                 return event
             }
-            let popoverWindow = self.popover.contentViewController?.view.window
-            if let window = event.window, window === popoverWindow || window === self.statusItem?.button?.window {
+            if let window = event.window, window === dropdown || window === self.statusItem?.button?.window {
                 return event
             }
-            self.popover.performClose(nil)
+            // A menu the dropdown opened (the host switcher) is its own window.
+            if let window = event.window, window.level.rawValue > dropdown.level.rawValue {
+                return event
+            }
+            self.closeDropdown()
             return event
         }
-        resignObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.popover.performClose(nil) }
-        }
+    }
+
+    /// Whether a screen point is on our icon's slot in the menu bar. The menu bar is drawn
+    /// by another process, so a click on the icon reaches the global monitor too (as a click
+    /// outside the app), just before the icon handles it. Closing there would make the
+    /// icon's own handling reopen the dropdown, so those clicks are left to it. The slot is
+    /// the status item's whole window, from the bottom of the menu bar to the screen's top
+    /// edge, which is taller than the button inside it.
+    private func isOnStatusItem(_ point: NSPoint) -> Bool {
+        guard let slot = statusItem?.button?.window?.frame else { return false }
+        return point.x >= slot.minX && point.x <= slot.maxX && point.y >= slot.minY
     }
 
     private func stopDismissMonitors() {
         if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
         if let m = localClickMonitor { NSEvent.removeMonitor(m) }
-        if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
         globalClickMonitor = nil
         localClickMonitor = nil
-        resignObserver = nil
     }
 
     private func updateStatusItem(_ jobs: [JobRow]) {
@@ -189,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: windows
 
     func openDashboard(path: String) {
-        popover.performClose(nil)
+        closeDropdown()
         NSApp.setActivationPolicy(.regular)  // Dock icon + Cmd-Tab while a window is open
         dashboard.show(path: path)
     }
@@ -202,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Fallback for when the backend can't start, so the Settings page can't load.
     func openBackendSettings() {
-        popover.performClose(nil)
+        closeDropdown()
         if settingsWindow == nil {
             let view = BackendSettingsView(settings: settings, backend: backend)
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
@@ -231,3 +288,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 }
+
+#if compiler(>=6.4)
+@available(macOS 27.0, *)
+extension AppDelegate: NSStatusItemExpandedInterfaceDelegate {
+    func statusItem(_ statusItem: NSStatusItem, didBegin session: NSStatusItemExpandedInterfaceSession) {
+        showDropdown()
+    }
+
+    func statusItemDidEndExpandedInterfaceSession(_ statusItem: NSStatusItem, animated: Bool) {
+        hideDropdown()
+    }
+}
+#endif
